@@ -102,21 +102,14 @@ int configure_descriptors(cudnnHandle_t* handle, struct descriptor* desc, int nu
 			int stride = layers[i].conv_layer.stride;
 			int input_img_width = (i==0) ? IMAGE_WIDTH : w;
 			int input_img_height = (i==0) ? IMAGE_HEIGHT:h;
-			if(stride != 0) {
-			output_img_width = (input_img_width-size+2*pad)/stride + 1;
-			output_img_height = (input_img_height-size + 2*pad)/stride + 1;
-			} else {
-				return 100;
-			}
-			status = cudnnSetFilter4dDescriptor(*(desc[i].filter_desc), CUDNN_DATA_FLOAT,
-												CUDNN_TENSOR_NCHW, 1, nc,size,size);
+			status = cudnnSetFilter4dDescriptor(*(desc[i].filter_desc), CUDNN_DATA_FLOAT,CUDNN_TENSOR_NCHW, 1, nc,size,size);
 			if(status != CUDNN_STATUS_SUCCESS) return (int)status;
-			status = cudnnSetConvolution2dDescriptor(*(desc[i].conv_desc),pad, pad, stride, stride,
-														1,1, CUDNN_CROSS_CORRELATION,CUDNN_DATA_FLOAT);
-			if(status != CUDNN_STATUS_SUCCESS) return (int)status;
-			status = cudnnSetTensor4dDescriptor(*(desc[i].output_desc), CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT,
-												batch_size, nc,output_img_height, output_img_width);
-			if(status != CUDNN_STATUS_SUCCESS) return (int)status;
+			status = cudnnSetConvolution2dDescriptor(*(desc[i].conv_desc), pad, pad, stride, stride, 1,1, CUDNN_CROSS_CORRELATION,CUDNN_DATA_FLOAT);
+			if (status != CUDNN_STATUS_SUCCESS) return (int)status;
+			status = cudnnGetConvolution2dForwardOutputDim(*(desc[i].conv_desc), *(desc[i].input_desc), *(desc[i].filter_desc), &n, &c, &h, &w);
+			if (status != CUDNN_STATUS_SUCCESS) return (int)status;
+			status = cudnnSetTensor4dDescriptor(*(desc[i].output_desc), CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, n,c,h,w);
+			if (status != CUDNN_STATUS_SUCCESS) return (int)status;
 			status = cudnnGetConvolutionForwardAlgorithm(*handle, *(desc[i].input_desc), *(desc[i].filter_desc),
 														*(desc[i].conv_desc), *(desc[i].output_desc),
 														CUDNN_CONVOLUTION_FWD_PREFER_FASTEST,0,
@@ -148,8 +141,16 @@ int allocate_memory(struct descriptor* desc, struct layer* layers, int num_layer
 			if(i==0) {
 				cudaMalloc(&desc[i].d_input, batch_size*IMAGE_HEIGHT*IMAGE_WIDTH*sizeof(float));
 			} else {
-				status = cudnnGetTensor4dDescriptor(*(desc[i-1].output_desc), &t, &n, &c, &h, &w,
-													NULL, NULL, NULL, NULL);
+				if (desc[i - 1].valid) {
+					status = cudnnGetTensor4dDescriptor(*(desc[i - 1].output_desc), &t, &n, &c, &h, &w,
+						NULL, NULL, NULL, NULL);
+				}
+				else {
+					n = batch_size;
+					c = 1;
+					h = 1;
+					w = layers[i - 1].fc_layer.size;
+				}
 				if(status != CUDNN_STATUS_SUCCESS) return (int)status;
 				stat = cudaMalloc(&desc[i].d_input, n*c*h*w*sizeof(float));
 				if(stat != cudaSuccess) return stat;
@@ -267,6 +268,3 @@ int computecost(float* y, float* yhat, float* ones_vector, int size, cublasHandl
 	if (stat != CUBLAS_STATUS_SUCCESS) return (int) stat;
 	return 0;
 }
-
-
-

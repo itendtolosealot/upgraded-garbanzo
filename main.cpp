@@ -98,13 +98,19 @@ int main(int argc, char **argv) {
 		syslog (LOG_ERR, "Output descriptor for last layer is NULL. Bailing out");
 		exit(1);
 	}
-	status = cudnnGetTensor4dDescriptor(*(desc[num_layers-1].output_desc), &t, &n, &c, &h, &w, NULL, NULL, NULL, NULL);
-	if(status != 0) {
-		syslog(LOG_ERR, "Error while determining Output vec size. Terminating the program");
-		exit(1);
+	if (layers[num_layers - 1].type == CONVOLUTION) {
+		status = cudnnGetTensor4dDescriptor(*(desc[num_layers - 1].output_desc), &t, &n, &c, &h, &w, NULL, NULL, NULL, NULL);
+		if (status != 0) {
+			syslog(LOG_ERR, "Error while determining Output vec size. Terminating the program");
+			exit(1);
+		}
+		get_matrix(&yhat, n*c, h*w, 1);
 	}
-	get_matrix(&yhat, n*c, h*w, 1);
-	one_vector = (float*) calloc(n*c*h*w, sizeof(float));
+	else if (layers[num_layers - 1].type == FULLYCONNECTED) {
+		get_matrix(&yhat, layers[num_layers - 1].fc_layer.size, batch_size);
+	}
+	
+	one_vector = (float*) calloc(layers[num_layers - 1].fc_layer.size*batch_size, sizeof(float));
 	for (int i=0; i< n*c*h*w; i++)
 		one_vector[i] = 1;
 
@@ -125,7 +131,7 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
-	status = computecost(desc[num_layers-1].d_output, yhat,  one_vector, n*c*h*w, &cublas, &cost);
+	status = computecost(desc[num_layers-1].d_output, yhat,  one_vector, layers[num_layers - 1].fc_layer.size*batch_size, &cublas, &cost);
 	if(status != 0) {
 		syslog(LOG_ERR, "Error in Compute cost. Terminating the program");
 		exit(1);
