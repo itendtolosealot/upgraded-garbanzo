@@ -6,18 +6,17 @@
 #include <cuda_runtime_api.h>
 #include <cublas.h>
 #include <cublas_api.h>
-
 #include <cublas_v2.h>
 #include <sys/time.h>
 #include <cudnn.h>
+#include <sys/syslog.h>
 #include "DeepLearning.h"
-#define __CUDA_ARCH__
 
 __global__ void cross_entropy(int array_size, float* y, float* yhat)
 {
   int i = blockIdx.x*blockDim.x + threadIdx.x;
   float res;
-  if (i < n) {
+  if (i < array_size) {
 	  if((yhat[i] == 0)|| (y[i]==0) || (y[i]==1) || (yhat[i] == 1))
 		  res = 0;
 	  else if (y[i]  > 1)
@@ -129,8 +128,6 @@ int configure_descriptors(cudnnHandle_t* handle, struct descriptor* desc, int nu
 															&desc[i].workspace_size);
 			if(status != CUDNN_STATUS_SUCCESS) return (int)status;
 		} else {
-			int input_size = layers[i].fc_layer.input_size;
-			int neuron_size = layers[i].fc_layer.size;
 			status = cudnnSetActivationDescriptor(*(desc[i].acti_desc), layers[i].fc_layer.activation,
 													CUDNN_NOT_PROPAGATE_NAN, 0.5);
 
@@ -142,7 +139,6 @@ int configure_descriptors(cudnnHandle_t* handle, struct descriptor* desc, int nu
 
 int allocate_memory(struct descriptor* desc, struct layer* layers, int num_layers, int batch_size) {
 	int n,c,h,w;
-	int work_space_size;
 	cudnnStatus_t status;
 	cudaError_t stat;
 	cudnnDataType_t t;
@@ -156,6 +152,7 @@ int allocate_memory(struct descriptor* desc, struct layer* layers, int num_layer
 													NULL, NULL, NULL, NULL);
 				if(status != CUDNN_STATUS_SUCCESS) return (int)status;
 				stat = cudaMalloc(&desc[i].d_input, n*c*h*w*sizeof(float));
+				if(stat != cudaSuccess) return stat;
 			}
 			status = cudnnGetFilter4dDescriptor(*(desc[i].filter_desc), &t, &format, &n,&c,&h,&w);
 			cudaMalloc(&desc[i].d_filter, n*c*h*w*sizeof(float));
@@ -163,16 +160,21 @@ int allocate_memory(struct descriptor* desc, struct layer* layers, int num_layer
 				status = cudnnGetTensor4dDescriptor(*(desc[i].output_desc), &t, &n, &c, &h, &w,
 													NULL, NULL, NULL, NULL);
 				if(status != CUDNN_STATUS_SUCCESS) return (int)status;
-				cudaMalloc(&desc[i].d_output,n*c*h*w*sizeof(float));
+				stat = cudaMalloc(&desc[i].d_output,n*c*h*w*sizeof(float));
+				if(stat != cudaSuccess) return stat;
 			}
-			cudaMalloc(&desc[i].d_workspace,desc[i].workspace_size);
+			stat = cudaMalloc(&desc[i].d_workspace,desc[i].workspace_size);
+			if(stat != cudaSuccess) return stat;
 
 		} else {
-				cudaMalloc(&desc[i].d_input, layers[i].fc_layer.input_size*sizeof(float));
-				cudaMalloc(&desc[i].d_weights,
+				stat = cudaMalloc(&desc[i].d_input, layers[i].fc_layer.input_size*sizeof(float));
+				if(stat != cudaSuccess) return stat;
+				stat = cudaMalloc(&desc[i].d_weights,
 							(layers[i].fc_layer.input_size)/batch_size*layers[i].fc_layer.size*sizeof(float));
+				if(stat != cudaSuccess) return stat;
 				if(i==num_layers-1) {
-					cudaMalloc(&desc[i].d_output, batch_size*layers[i].fc_layer.size*sizeof(float));
+					stat = cudaMalloc(&desc[i].d_output, batch_size*layers[i].fc_layer.size*sizeof(float));
+					if(stat != cudaSuccess) return stat;
 				}
 		}
 
@@ -193,12 +195,15 @@ int copy_input_to_device(struct descriptor* desc, struct layer* layers, int num_
 	for(int i=0; i< num_layers; i++) {
 		if(desc[i].valid)  {
 			status = cudnnGetFilter4dDescriptor(*(desc[i].filter_desc), &t, &format, &n,&c,&h,&w);
+			if(status != CUDNN_STATUS_SUCCESS) return stat;
 			stat = cudaMemcpy(desc[i].d_filter, layers[i].conv_layer.filter,
 								sizeof(float)*n*c*h*w, cudaMemcpyHostToDevice);
+			if(stat != cudaSuccess) return stat;
 		} else {
 			stat = cudaMemcpy(desc[i].d_weights, layers[i].fc_layer.weights ,
 						sizeof(float)*layers[i].fc_layer.input_size*layers[i].fc_layer.size,
 						cudaMemcpyHostToDevice);
+			if(stat != cudaSuccess) return stat;
 		}
 	}
 	return 0;
