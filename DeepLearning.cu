@@ -30,33 +30,34 @@ int setup_descriptors ( struct descriptor** desc, int num_layers, struct layer *
 	struct descriptor* d;
 	cudnnStatus_t status;
 
-	d = (struct descriptor*) malloc(sizeof(struct descriptor)*num_layers);
+	d = (struct descriptor*) malloc(sizeof(descriptor)*num_layers);
 	if (d == NULL)
 		return 1000;
 	for(int i=0;i< num_layers;i++) {
 		if(layers[i].type==CONVOLUTION) {
 			d[i].valid = true;
-			status = cudnnCreateTensorDescriptor(d[i].input_desc);
+			status = cudnnCreateTensorDescriptor(&d[i].input_desc);
 			if(status != CUDNN_STATUS_SUCCESS) return (int)status;
 
-			status = cudnnCreateTensorDescriptor(d[i].output_desc);
+			status = cudnnCreateTensorDescriptor(&d[i].output_desc);
 			if(status != CUDNN_STATUS_SUCCESS) return (int)status;
 
-			status = cudnnCreateFilterDescriptor(d[i].filter_desc);
+			status = cudnnCreateFilterDescriptor(&d[i].filter_desc);
 			if(status != CUDNN_STATUS_SUCCESS) return (int)status;
 
-			status = cudnnCreateConvolutionDescriptor(d[i].conv_desc);
+			status = cudnnCreateConvolutionDescriptor(&d[i].conv_desc);
 			if(status != CUDNN_STATUS_SUCCESS) return (int)status;
 
 			d[i].d_weights = NULL;
 
 		} else {
 			d[i].valid = false;
-			d[i].input_desc= NULL;
-			d[i].filter_desc=NULL;
-			d[i].output_desc=NULL;
-			d[i].conv_desc=NULL;
-			status = cudnnCreateActivationDescriptor(d[i].acti_desc);
+			status = cudnnCreateTensorDescriptor(&d[i].y_desc);
+			if(status != CUDNN_STATUS_SUCCESS) return (int)status;
+			status = cudnnCreateTensorDescriptor(&d[i].output_desc);
+			if(status != CUDNN_STATUS_SUCCESS) return (int)status;
+			status = cudnnCreateActivationDescriptor(&d[i].acti_desc);
+			if(status != CUDNN_STATUS_SUCCESS) return (int)status;
 		}
 	}
 	*(desc) = d;
@@ -67,17 +68,27 @@ int destroy_descriptors (struct descriptor* desc, int num_layers) {
 	cudnnStatus_t status;
 	for(int i=0;i< num_layers;i++) {
 		if(desc[i].valid) {
-			status = cudnnDestroyTensorDescriptor(*(desc[i].input_desc));
+			status = cudnnDestroyTensorDescriptor((desc[i].input_desc));
 			if(status != CUDNN_STATUS_SUCCESS) return (int)status;
-			status = cudnnDestroyTensorDescriptor(*(desc[i].output_desc));
+			status = cudnnDestroyTensorDescriptor((desc[i].output_desc));
 			if(status!= CUDNN_STATUS_SUCCESS) return (int)status;
-			status = cudnnDestroyFilterDescriptor(*(desc[i].filter_desc));
+			status = cudnnDestroyFilterDescriptor((desc[i].filter_desc));
 			if(status!= CUDNN_STATUS_SUCCESS) return (int)status;
-			status = cudnnDestroyConvolutionDescriptor(*(desc[i].conv_desc));
+			status = cudnnDestroyConvolutionDescriptor((desc[i].conv_desc));
 			if(status!= CUDNN_STATUS_SUCCESS) return (int)status;
+
 		} else {
-			cudaFree(desc[i].d_weights);
+			if (desc[i].d_weights != NULL) cudaFree(desc[i].d_weights);
+			if (desc[i].d_y != NULL) cudaFree(desc[i].d_y);
+			cudnnDestroyTensorDescriptor(desc[i].y_desc);
+			cudnnDestroyTensorDescriptor(desc[i].output_desc);
+			cudnnDestroyActivationDescriptor(desc[i].acti_desc);
 		}
+
+		if(desc[i].d_input != NULL) cudaFree(desc[i].d_input);
+		if(desc[i].d_filter != NULL) cudaFree(desc[i].d_filter);
+		if(desc[i].d_output != NULL) cudaFree(desc[i].d_output);
+		if(desc[i].d_workspace != NULL) cudaFree(desc[i].d_workspace);
 	}
 	free(desc);
 	return 0;
@@ -86,44 +97,43 @@ int destroy_descriptors (struct descriptor* desc, int num_layers) {
 int configure_descriptors(cudnnHandle_t* handle, struct descriptor* desc, int num_layers, struct layer *layers, int batch_size) {
 	cudnnStatus_t status;
 	int n,c,h,w;
-	int output_img_width,output_img_height;
 	for (int i=0; i < num_layers;i++) {
 		if (desc[i].valid) {
 			if(i==0) {
-				status = cudnnSetTensor4dDescriptor(*(desc[i].input_desc), CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, batch_size, 1, IMAGE_HEIGHT, IMAGE_WIDTH);
+				status = cudnnSetTensor4dDescriptor((desc[i].input_desc), CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, batch_size, 1, IMAGE_HEIGHT, IMAGE_WIDTH);
 			} else {
 				cudnnDataType_t t;
-				status = cudnnGetTensor4dDescriptor(*(desc[i-1].output_desc), &t, &n, &c, &h, &w, NULL, NULL, NULL, NULL);
-				status = cudnnSetTensor4dDescriptor(*(desc[i].input_desc), CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, n,c,h,w);
+				status = cudnnGetTensor4dDescriptor((desc[i-1].output_desc), &t, &n, &c, &h, &w, NULL, NULL, NULL, NULL);
+				status = cudnnSetTensor4dDescriptor((desc[i].input_desc), CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, n,c,h,w);
 			}
 			int nc = layers[i].conv_layer.num_channels;
 			int size = layers[i].conv_layer.filter_size;
 			int pad= layers[i].conv_layer.padding;
 			int stride = layers[i].conv_layer.stride;
-			int input_img_width = (i==0) ? IMAGE_WIDTH : w;
-			int input_img_height = (i==0) ? IMAGE_HEIGHT:h;
-			status = cudnnSetFilter4dDescriptor(*(desc[i].filter_desc), CUDNN_DATA_FLOAT,CUDNN_TENSOR_NCHW, 1, nc,size,size);
+			status = cudnnSetFilter4dDescriptor((desc[i].filter_desc), CUDNN_DATA_FLOAT,CUDNN_TENSOR_NCHW, 1, nc,size,size);
 			if(status != CUDNN_STATUS_SUCCESS) return (int)status;
-			status = cudnnSetConvolution2dDescriptor(*(desc[i].conv_desc), pad, pad, stride, stride, 1,1, CUDNN_CROSS_CORRELATION,CUDNN_DATA_FLOAT);
+			status = cudnnSetConvolution2dDescriptor((desc[i].conv_desc), pad, pad, stride, stride, 1,1, CUDNN_CROSS_CORRELATION,CUDNN_DATA_FLOAT);
 			if (status != CUDNN_STATUS_SUCCESS) return (int)status;
-			status = cudnnGetConvolution2dForwardOutputDim(*(desc[i].conv_desc), *(desc[i].input_desc), *(desc[i].filter_desc), &n, &c, &h, &w);
+			status = cudnnGetConvolution2dForwardOutputDim((desc[i].conv_desc), (desc[i].input_desc), (desc[i].filter_desc), &n, &c, &h, &w);
 			if (status != CUDNN_STATUS_SUCCESS) return (int)status;
-			status = cudnnSetTensor4dDescriptor(*(desc[i].output_desc), CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, n,c,h,w);
+			status = cudnnSetTensor4dDescriptor((desc[i].output_desc), CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, n,c,h,w);
 			if (status != CUDNN_STATUS_SUCCESS) return (int)status;
-			status = cudnnGetConvolutionForwardAlgorithm(*handle, *(desc[i].input_desc), *(desc[i].filter_desc),
-														*(desc[i].conv_desc), *(desc[i].output_desc),
+			status = cudnnGetConvolutionForwardAlgorithm(*handle, (desc[i].input_desc), (desc[i].filter_desc),
+														(desc[i].conv_desc), (desc[i].output_desc),
 														CUDNN_CONVOLUTION_FWD_PREFER_FASTEST,0,
 														&desc[i].algo_desc);
 			if(status != CUDNN_STATUS_SUCCESS) return (int)status;
-			status = cudnnGetConvolutionForwardWorkspaceSize(*handle, *(desc[i].input_desc),
-															*(desc[i].filter_desc),*(desc[i].conv_desc),
-															*(desc[i].output_desc), desc[i].algo_desc,
+			status = cudnnGetConvolutionForwardWorkspaceSize(*handle, (desc[i].input_desc),
+															(desc[i].filter_desc), (desc[i].conv_desc),
+															(desc[i].output_desc), desc[i].algo_desc,
 															&desc[i].workspace_size);
 			if(status != CUDNN_STATUS_SUCCESS) return (int)status;
 		} else {
-			status = cudnnSetActivationDescriptor(*(desc[i].acti_desc), layers[i].fc_layer.activation,
-													CUDNN_NOT_PROPAGATE_NAN, 0.5);
-
+			status = cudnnSetTensor4dDescriptor((desc[i].output_desc), CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, batch_size, 1, layers[i].fc_layer.size, 1);
+			if(status != CUDNN_STATUS_SUCCESS) return (int)status;
+			status = cudnnSetTensor4dDescriptor((desc[i].y_desc), CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, batch_size, 1, layers[i].fc_layer.size, 1);
+			if(status != CUDNN_STATUS_SUCCESS) return (int)status;
+			status = cudnnSetActivationDescriptor((desc[i].acti_desc), layers[i].fc_layer.activation, CUDNN_NOT_PROPAGATE_NAN, 0.5);
 			if(status != CUDNN_STATUS_SUCCESS) return (int)status;
 		}
 	}
@@ -142,7 +152,7 @@ int allocate_memory(struct descriptor* desc, struct layer* layers, int num_layer
 				cudaMalloc(&desc[i].d_input, batch_size*IMAGE_HEIGHT*IMAGE_WIDTH*sizeof(float));
 			} else {
 				if (desc[i - 1].valid) {
-					status = cudnnGetTensor4dDescriptor(*(desc[i - 1].output_desc), &t, &n, &c, &h, &w,
+					status = cudnnGetTensor4dDescriptor((desc[i - 1].output_desc), &t, &n, &c, &h, &w,
 						NULL, NULL, NULL, NULL);
 				}
 				else {
@@ -155,10 +165,10 @@ int allocate_memory(struct descriptor* desc, struct layer* layers, int num_layer
 				stat = cudaMalloc(&desc[i].d_input, n*c*h*w*sizeof(float));
 				if(stat != cudaSuccess) return stat;
 			}
-			status = cudnnGetFilter4dDescriptor(*(desc[i].filter_desc), &t, &format, &n,&c,&h,&w);
+			status = cudnnGetFilter4dDescriptor((desc[i].filter_desc), &t, &format, &n,&c,&h,&w);
 			cudaMalloc(&desc[i].d_filter, n*c*h*w*sizeof(float));
 			if(i==num_layers-1) {
-				status = cudnnGetTensor4dDescriptor(*(desc[i].output_desc), &t, &n, &c, &h, &w,
+				status = cudnnGetTensor4dDescriptor((desc[i].output_desc), &t, &n, &c, &h, &w,
 													NULL, NULL, NULL, NULL);
 				if(status != CUDNN_STATUS_SUCCESS) return (int)status;
 				stat = cudaMalloc(&desc[i].d_output,n*c*h*w*sizeof(float));
@@ -195,7 +205,7 @@ int copy_input_to_device(struct descriptor* desc, struct layer* layers, int num_
 	stat = cudaMemcpy(desc[0].d_input, input_image, sizeof(float)*batch_size*IMAGE_WIDTH*IMAGE_HEIGHT, cudaMemcpyHostToDevice);
 	for(int i=0; i< num_layers; i++) {
 		if(desc[i].valid)  {
-			status = cudnnGetFilter4dDescriptor(*(desc[i].filter_desc), &t, &format, &n,&c,&h,&w);
+			status = cudnnGetFilter4dDescriptor((desc[i].filter_desc), &t, &format, &n,&c,&h,&w);
 			if(status != CUDNN_STATUS_SUCCESS) return stat;
 			stat = cudaMemcpy(desc[i].d_filter, layers[i].conv_layer.filter,
 								sizeof(float)*n*c*h*w, cudaMemcpyHostToDevice);
@@ -212,8 +222,9 @@ int copy_input_to_device(struct descriptor* desc, struct layer* layers, int num_
 }
 
 
-int feedforward(cudnnHandle_t* cudnn, 	cublasHandle_t* handle, struct descriptor* desc, struct layer *layers, int num_layers, int batch_size)
+struct Status feedforward(cudnnHandle_t* cudnn, 	cublasHandle_t* handle, struct descriptor* desc, struct layer *layers, int num_layers, int batch_size)
 {
+	struct Status ff_stat;
 	cudnnStatus_t status;
 	cublasStatus_t stat;
 	float* output_array;
@@ -221,11 +232,15 @@ int feedforward(cudnnHandle_t* cudnn, 	cublasHandle_t* handle, struct descriptor
 	for(int i=0;i < num_layers;i++) {
         output_array = (i < num_layers-1) ? desc[i+1].d_input:desc[i].d_output;
 		if(desc[i].valid) {
-				status = cudnnConvolutionForward(*cudnn,&alpha, *(desc[i].input_desc), desc[i].d_input,
-											*(desc[i].filter_desc),desc[i].d_filter, *(desc[i].conv_desc),
+				status = cudnnConvolutionForward(*cudnn,&alpha, (desc[i].input_desc), desc[i].d_input,
+											(desc[i].filter_desc),desc[i].d_filter, (desc[i].conv_desc),
 											 desc[i].algo_desc, desc[i].d_workspace,desc[i].workspace_size,
-											 &beta, *(desc[i].output_desc), output_array);
-				if(status != CUDNN_STATUS_SUCCESS) return (int)status;
+											 &beta, (desc[i].output_desc), output_array);
+				if(status != CUDNN_STATUS_SUCCESS) {
+					ff_stat.failure = CUDNN;
+					ff_stat.cudnn_stat = status;
+					return ff_stat;
+				}
 		} else {
 				stat =  cublasSgemm(*handle,
 									CUBLAS_OP_N,
@@ -241,20 +256,25 @@ int feedforward(cudnnHandle_t* cudnn, 	cublasHandle_t* handle, struct descriptor
 									&beta,
 									output_array,
 									layers[i].fc_layer.size);
-				if (stat != CUBLAS_STATUS_SUCCESS) return (int) stat;
+				if (stat != CUBLAS_STATUS_SUCCESS) {
+					ff_stat.failure = CUBLAS;
+					ff_stat.cublas_stat=stat;
+					return ff_stat;
+				}
 
-				status = cudnnActivationForward(*cudnn,
-												*(desc[i].acti_desc),
-												&alpha,
-												*(desc[i].output_desc),
-												(void *)output_array,
-												&beta,
-												*(desc[i].output_desc),
-												(void *) output_array);
-				if(status != CUDNN_STATUS_SUCCESS) return (int)status;
+				status = cudnnActivationForward(*cudnn, desc[i].acti_desc, &alpha,
+												desc[i].output_desc, output_array, &beta,
+												desc[i].output_desc , output_array);
+				if(status != CUDNN_STATUS_SUCCESS) {
+					ff_stat.failure = CUDNN;
+					ff_stat.cudnn_stat=status;
+					return ff_stat;
+
+				}
 			}
 		}
-	return 0;
+	ff_stat.failure=NONE;
+	return ff_stat;
 }
 
 

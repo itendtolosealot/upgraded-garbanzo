@@ -12,6 +12,7 @@
 #include <cuda_runtime_api.h>
 #include <cublas.h>
 #include <cublas_api.h>
+#include <unistd.h>
 
 #include <cublas_v2.h>
 #include <sys/time.h>
@@ -32,6 +33,7 @@
   }
 
 enum LayerType {CONVOLUTION, FULLYCONNECTED};
+enum FailureType {NONE, CUDNN, CUBLAS};
 struct convLayer {
 	int filter_size;
 	int padding;
@@ -50,6 +52,12 @@ struct fcLayer {
 	cudnnActivationMode_t activation;
 };
 
+struct Status {
+	FailureType failure;
+	cudnnStatus_t  cudnn_stat;
+	cublasStatus_t cublas_stat;
+};
+
 struct layer {
 	LayerType type;
 	union {
@@ -60,15 +68,17 @@ struct layer {
 
 struct descriptor {
 	bool valid;
-	cudnnTensorDescriptor_t* input_desc;
-	cudnnTensorDescriptor_t* output_desc;
-	cudnnFilterDescriptor_t* filter_desc;
-	cudnnConvolutionDescriptor_t* conv_desc;
+	cudnnTensorDescriptor_t input_desc;
+	cudnnTensorDescriptor_t y_desc;
+	cudnnTensorDescriptor_t output_desc;
+	cudnnFilterDescriptor_t filter_desc;
+	cudnnConvolutionDescriptor_t conv_desc;
 	cudnnConvolutionFwdAlgo_t algo_desc;
-	cudnnActivationDescriptor_t* acti_desc;
+	cudnnActivationDescriptor_t acti_desc;
 	unsigned long workspace_size;
 	float* d_input;
 	float* d_filter;
+	float* d_y;
 	float* d_output;
 	float* d_weights;
 	float* d_workspace;
@@ -78,7 +88,7 @@ int destroy_descriptors (struct descriptor* desc, int num_layers);
 int configure_descriptors(cudnnHandle_t* handle, struct descriptor* desc, int num_layers, struct layer *layers, int batch_size);
 int allocate_memory(struct descriptor* desc, struct layer* layers, int num_layers, int batch_size) ;
 int copy_input_to_device(struct descriptor* desc, struct layer* layers, int num_layers, float* input_image, int batch_size);
-int feedforward(cudnnHandle_t* cudnn, 	cublasHandle_t* handle, struct descriptor* desc, struct layer *layers, int num_layers, int batch_size);
+struct Status feedforward(cudnnHandle_t* cudnn, 	cublasHandle_t* handle, struct descriptor* desc, struct layer *layers, int num_layers, int batch_size);
 int computecost(float* y, float* yhat, float* ones_vector, int size, cublasHandle_t* handle, float* cost);
 
 
