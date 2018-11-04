@@ -22,5 +22,5 @@
 void  get_matrix(float** mat, int size_x, int size_y, int type ) ;
 void print_matrix(float* Result, int size_x, int size_y);
 void MultiplyCPU(float* A, float* B, float* C, int m, int k, int n);
-
+void create_output_arrays_in_gpu(float** h_y, float** d_y, float** h_one_vec, float** d_one_vec, int size_x, int size_y);
 #endif /* UTILS_H_ */

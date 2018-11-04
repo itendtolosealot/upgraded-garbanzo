@@ -54,6 +54,7 @@ struct fcLayer {
 
 struct Status {
 	FailureType failure;
+	int layer;
 	cudnnStatus_t  cudnn_stat;
 	cublasStatus_t cublas_stat;
 };
@@ -89,7 +90,7 @@ int configure_descriptors(cudnnHandle_t* handle, struct descriptor* desc, int nu
 int allocate_memory(struct descriptor* desc, struct layer* layers, int num_layers, int batch_size) ;
 int copy_input_to_device(struct descriptor* desc, struct layer* layers, int num_layers, float* input_image, int batch_size);
 struct Status feedforward(cudnnHandle_t* cudnn, 	cublasHandle_t* handle, struct descriptor* desc, struct layer *layers, int num_layers, int batch_size);
-int computecost(float* y, float* yhat, float* ones_vector, int size, cublasHandle_t* handle, float* cost);
+int computecost(float* y, float* yhat, float* ones_vector, int size, cublasHandle_t handle, float* cost);
 
 
 

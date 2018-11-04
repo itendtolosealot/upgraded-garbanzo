@@ -27,7 +27,7 @@ void  get_matrix(float** mat, int size_x, int size_y, int type ) {
         matrix = (float*) malloc(size_x * size_y*sizeof(float));
         for (int i=0;i<size_x*size_y;i++) {
         	if (type == 1)
-            	matrix[i] = rand()/RAND_MAX;
+            	matrix[i] = (rand()*1.0)/(RAND_MAX*1.0);
             else
             	matrix[i] = 0;
         }
@@ -46,4 +46,22 @@ void print_matrix(float* Result, int size_x, int size_y) {
     }
 }
 
+ void create_output_arrays_in_gpu(float** h_y, float** d_y, float** h_one_vec, float** d_one_vec, int size_x, int size_y) {
+		get_matrix(h_y, size_x, size_y,1);
+		cudaMalloc(d_y, size_x*size_y*sizeof(float));
+		cudaMemcpy(d_y, h_y, size_x*size_y*sizeof(float), cudaMemcpyHostToDevice);
+		float* h_one = (float*) calloc(size_x*size_y, sizeof(float));
+		for (int i=0; i< size_x*size_y; i++)
+			h_one[i]= 1;
+		*h_one_vec = h_one;
+		cudaMalloc(d_one_vec,size_x*size_y*sizeof(float));
+		cudaMemcpy(d_one_vec, h_one_vec, size_x*size_y*sizeof(float), cudaMemcpyHostToDevice);
+ }
+
+void delete_output_arrays_from_gpu(float* h_y, float* d_y,float* h_one_vec, float* d_one_vec) {
+	free(h_y);
+	free(h_one_vec);
+	cudaFree(d_y);
+	cudaFree(d_one_vec);
+}
 

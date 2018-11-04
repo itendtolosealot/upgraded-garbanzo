@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 #include <cuda.h>
@@ -15,13 +16,15 @@
 __global__ void cross_entropy(int array_size, float* y, float* yhat)
 {
   int i = blockIdx.x*blockDim.x + threadIdx.x;
-  float res;
+  float res = 0;
   if (i < array_size) {
-	  if((yhat[i] == 0)|| (y[i]==0) || (y[i]==1) || (yhat[i] == 1))
+
+	  if((yhat[i] == 0)|| (yhat[i] == 1))
 		  res = 0;
-	  else if (y[i]  > 1)
+	  else
 		  res = __logf(1-yhat[i])*y[i] + __logf(yhat[i])*(1-y[i]);
-	  y[i] = res;
+	  yhat[i] = res;
+	//  result = y[i]+ yhat[i];
   }
 }
 
@@ -178,10 +181,13 @@ int allocate_memory(struct descriptor* desc, struct layer* layers, int num_layer
 			if(stat != cudaSuccess) return stat;
 
 		} else {
-				stat = cudaMalloc(&desc[i].d_input, layers[i].fc_layer.input_size*sizeof(float));
+
+				stat = cudaMalloc(&desc[i].d_input, layers[i].fc_layer.input_size*batch_size*sizeof(float));
 				if(stat != cudaSuccess) return stat;
-				stat = cudaMalloc(&desc[i].d_weights,
-							(layers[i].fc_layer.input_size)/batch_size*layers[i].fc_layer.size*sizeof(float));
+				stat = cudaMalloc(&desc[i].d_weights, (layers[i].fc_layer.input_size)/batch_size*layers[i].fc_layer.size*sizeof(float));
+				syslog(LOG_DEBUG, "Memory allocated to d_weights for layer %d PTR to d_weights %p", i, (void *) desc[i].d_weights);
+				if(stat != cudaSuccess) return stat;
+				stat = cudaMalloc(&desc[i].d_y, batch_size*layers[i].fc_layer.size*sizeof(float));
 				if(stat != cudaSuccess) return stat;
 				if(i==num_layers-1) {
 					stat = cudaMalloc(&desc[i].d_output, batch_size*layers[i].fc_layer.size*sizeof(float));
@@ -206,7 +212,7 @@ int copy_input_to_device(struct descriptor* desc, struct layer* layers, int num_
 	for(int i=0; i< num_layers; i++) {
 		if(desc[i].valid)  {
 			status = cudnnGetFilter4dDescriptor((desc[i].filter_desc), &t, &format, &n,&c,&h,&w);
-			if(status != CUDNN_STATUS_SUCCESS) return stat;
+			if(status != CUDNN_STATUS_SUCCESS) return status;
 			stat = cudaMemcpy(desc[i].d_filter, layers[i].conv_layer.filter,
 								sizeof(float)*n*c*h*w, cudaMemcpyHostToDevice);
 			if(stat != cudaSuccess) return stat;
@@ -222,7 +228,7 @@ int copy_input_to_device(struct descriptor* desc, struct layer* layers, int num_
 }
 
 
-struct Status feedforward(cudnnHandle_t* cudnn, 	cublasHandle_t* handle, struct descriptor* desc, struct layer *layers, int num_layers, int batch_size)
+struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct descriptor* desc, struct layer *layers, int num_layers, int batch_size)
 {
 	struct Status ff_stat;
 	cudnnStatus_t status;
@@ -242,6 +248,9 @@ struct Status feedforward(cudnnHandle_t* cudnn, 	cublasHandle_t* handle, struct 
 					return ff_stat;
 				}
 		} else {
+				assert(desc[i].d_input != NULL);
+				assert(desc[i].d_y != NULL );
+				assert(desc[i].d_weights != NULL);
 				stat =  cublasSgemm(*handle,
 									CUBLAS_OP_N,
 									CUBLAS_OP_N,
@@ -254,7 +263,7 @@ struct Status feedforward(cudnnHandle_t* cudnn, 	cublasHandle_t* handle, struct 
 									desc[i].d_input,
 									(int)((layers[i].fc_layer.input_size)/batch_size ),
 									&beta,
-									output_array,
+									desc[i].d_y,
 									layers[i].fc_layer.size);
 				if (stat != CUBLAS_STATUS_SUCCESS) {
 					ff_stat.failure = CUBLAS;
@@ -263,10 +272,11 @@ struct Status feedforward(cudnnHandle_t* cudnn, 	cublasHandle_t* handle, struct 
 				}
 
 				status = cudnnActivationForward(*cudnn, desc[i].acti_desc, &alpha,
-												desc[i].output_desc, output_array, &beta,
+												desc[i].y_desc, desc[i].d_y, &beta,
 												desc[i].output_desc , output_array);
 				if(status != CUDNN_STATUS_SUCCESS) {
 					ff_stat.failure = CUDNN;
+					ff_stat.layer = i;
 					ff_stat.cudnn_stat=status;
 					return ff_stat;
 
@@ -278,13 +288,17 @@ struct Status feedforward(cudnnHandle_t* cudnn, 	cublasHandle_t* handle, struct 
 }
 
 
-int computecost(float* y, float* yhat, float* ones_vector, int size, cublasHandle_t* handle, float* cost) {
+int computecost(float* y, float* yhat, float* ones_vector, int size, cublasHandle_t handle, float* cost) {
 	cudaError_t status;
 	cublasStatus_t stat;
-	cross_entropy<<<(size+255)/256, 256>>>(size, y, yhat);
+	int blockSize,gridSize;
+	blockSize = 256;
+	gridSize = (int) ceil ((float ) size/blockSize);
+	cross_entropy<<<gridSize, blockSize>>>(size, y, yhat);
     status = cudaDeviceSynchronize();
     if (status != cudaSuccess) return (int) status;
-    stat = cublasSdot_v2(*handle, size, ones_vector,1, y, 1, cost);
+    stat = cublasSdot_v2(handle, size, ones_vector,1, yhat, 1, cost);
+    *cost /= size;
 	if (stat != CUBLAS_STATUS_SUCCESS) return (int) stat;
 	return 0;
 }
