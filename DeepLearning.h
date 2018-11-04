@@ -33,7 +33,7 @@
   }
 
 enum LayerType {CONVOLUTION, FULLYCONNECTED};
-enum FailureType {NONE, CUDNN, CUBLAS};
+enum FailureType {NONE, CUDNN, CUBLAS, CUDA};
 struct convLayer {
 	int filter_size;
 	int padding;
@@ -57,6 +57,7 @@ struct Status {
 	int layer;
 	cudnnStatus_t  cudnn_stat;
 	cublasStatus_t cublas_stat;
+	cudaError_t cuda_stat;
 };
 
 struct layer {

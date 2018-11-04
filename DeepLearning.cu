@@ -12,8 +12,9 @@
 #include <cudnn.h>
 #include <sys/syslog.h>
 #include "DeepLearning.h"
+#include "utils.h"
 
-__global__ void cross_entropy(int array_size, float* y, float* yhat)
+__global__ void cross_entropy(int array_size, float* y, float* yhat, float* result)
 {
   int i = blockIdx.x*blockDim.x + threadIdx.x;
   float res = 0;
@@ -23,7 +24,7 @@ __global__ void cross_entropy(int array_size, float* y, float* yhat)
 		  res = 0;
 	  else
 		  res = __logf(1-yhat[i])*y[i] + __logf(yhat[i])*(1-y[i]);
-	  yhat[i] = res;
+	  result[i] = res;
 	//  result = y[i]+ yhat[i];
   }
 }
@@ -181,8 +182,7 @@ int allocate_memory(struct descriptor* desc, struct layer* layers, int num_layer
 			if(stat != cudaSuccess) return stat;
 
 		} else {
-
-				stat = cudaMalloc(&desc[i].d_input, layers[i].fc_layer.input_size*batch_size*sizeof(float));
+				stat = cudaMalloc(&desc[i].d_input, layers[i].fc_layer.input_size*sizeof(float));
 				if(stat != cudaSuccess) return stat;
 				stat = cudaMalloc(&desc[i].d_weights, (layers[i].fc_layer.input_size)/batch_size*layers[i].fc_layer.size*sizeof(float));
 				syslog(LOG_DEBUG, "Memory allocated to d_weights for layer %d PTR to d_weights %p", i, (void *) desc[i].d_weights);
@@ -207,8 +207,14 @@ int copy_input_to_device(struct descriptor* desc, struct layer* layers, int num_
 	cudnnDataType_t t;
 	cudnnTensorFormat_t format;
 	int n,c,h,w;
+	FILE* fp = fopen("input_post_copy", "w");
 
 	stat = cudaMemcpy(desc[0].d_input, input_image, sizeof(float)*batch_size*IMAGE_WIDTH*IMAGE_HEIGHT, cudaMemcpyHostToDevice);
+	print_to_file(fp, desc[0].d_input, sizeof(float)*batch_size*IMAGE_WIDTH*IMAGE_HEIGHT, "Input_Post_copy", -1);
+	if(stat != cudaSuccess) {
+		syslog(LOG_ERR, "Encountered Error %d when copying input_image to d_input", stat);
+		exit(1);
+	}
 	for(int i=0; i< num_layers; i++) {
 		if(desc[i].valid)  {
 			status = cudnnGetFilter4dDescriptor((desc[i].filter_desc), &t, &format, &n,&c,&h,&w);
@@ -218,7 +224,7 @@ int copy_input_to_device(struct descriptor* desc, struct layer* layers, int num_
 			if(stat != cudaSuccess) return stat;
 		} else {
 			stat = cudaMemcpy(desc[i].d_weights, layers[i].fc_layer.weights ,
-						sizeof(float)*layers[i].fc_layer.input_size*layers[i].fc_layer.size,
+						sizeof(float)*layers[i].fc_layer.input_size*layers[i].fc_layer.size*1/batch_size,
 						cudaMemcpyHostToDevice);
 			if(stat != cudaSuccess) return stat;
 		}
@@ -235,6 +241,7 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 	cublasStatus_t stat;
 	float* output_array;
 	const float alpha=1, beta=0;
+	FILE* fp = fopen("values.txt", "w");
 	for(int i=0;i < num_layers;i++) {
         output_array = (i < num_layers-1) ? desc[i+1].d_input:desc[i].d_output;
 		if(desc[i].valid) {
@@ -245,12 +252,17 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 				if(status != CUDNN_STATUS_SUCCESS) {
 					ff_stat.failure = CUDNN;
 					ff_stat.cudnn_stat = status;
+					fclose(fp);
 					return ff_stat;
 				}
 		} else {
 				assert(desc[i].d_input != NULL);
 				assert(desc[i].d_y != NULL );
 				assert(desc[i].d_weights != NULL);
+				print_to_file(fp, desc[i].d_input, layers[i].fc_layer.input_size, "d_input", i);
+				//print_to_file(fp, desc[i].d_weights, layers[i].fc_layer.input_size, "d_weights", i);
+				print_to_file(fp, desc[i].d_y, layers[i].fc_layer.size*batch_size, "d_y_before_mult", -1);
+
 				stat =  cublasSgemm(*handle,
 									CUBLAS_OP_N,
 									CUBLAS_OP_N,
@@ -266,39 +278,73 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 									desc[i].d_y,
 									layers[i].fc_layer.size);
 				if (stat != CUBLAS_STATUS_SUCCESS) {
-					ff_stat.failure = CUBLAS;
-					ff_stat.cublas_stat=stat;
-					return ff_stat;
+									ff_stat.failure = CUBLAS;
+									ff_stat.cublas_stat=stat;
+									fclose(fp);
+									return ff_stat;
 				}
 
+				print_to_file(fp, desc[i].d_y, layers[i].fc_layer.size*batch_size, "d_y", i);
 				status = cudnnActivationForward(*cudnn, desc[i].acti_desc, &alpha,
 												desc[i].y_desc, desc[i].d_y, &beta,
 												desc[i].output_desc , output_array);
 				if(status != CUDNN_STATUS_SUCCESS) {
-					ff_stat.failure = CUDNN;
-					ff_stat.layer = i;
-					ff_stat.cudnn_stat=status;
-					return ff_stat;
+								ff_stat.failure = CUDNN;
+								ff_stat.layer = i;
+								ff_stat.cudnn_stat=status;
+								fclose(fp);
+								return ff_stat;
 
 				}
+				print_to_file(fp, output_array, layers[i].fc_layer.size*batch_size, "output_array ", i);
+				printf("Num Layers: %d\n", num_layers);
 			}
 		}
 	ff_stat.failure=NONE;
+	fclose(fp);
 	return ff_stat;
 }
+
 
 
 int computecost(float* y, float* yhat, float* ones_vector, int size, cublasHandle_t handle, float* cost) {
 	cudaError_t status;
 	cublasStatus_t stat;
 	int blockSize,gridSize;
+	FILE* fp = fopen("output.txt", "w");
+	float* h_yhat = (float* )malloc(size*sizeof(float));
+	float* h_y = (float* )malloc(size*sizeof(float));
+	float* d_result;
+	float* h_result = (float*) malloc(size*sizeof(float));
 	blockSize = 256;
 	gridSize = (int) ceil ((float ) size/blockSize);
-	cross_entropy<<<gridSize, blockSize>>>(size, y, yhat);
+	status = cudaMalloc(&d_result, size*sizeof(float));
+	if (status != cudaSuccess) { syslog(LOG_ERR, "Allocation of d_result failed"); return status;}
+	status = cudaMemcpy(h_yhat, yhat, size*sizeof(float), cudaMemcpyDeviceToHost);
+	if (status != cudaSuccess) { syslog(LOG_ERR, "Memcpy of yhat failed with Error code: %d", (int)status); return status;}
+	status = cudaMemcpy(h_y, y, size*sizeof(float), cudaMemcpyDeviceToHost);
+	if (status != cudaSuccess) { syslog(LOG_ERR, "Memcpy of y failed with Error code: %d", (int)status); return status;}
+	 printf("\n\n Printing Data from the GPU: d_y \n\n");
+	    print_matrix(h_y, (int)size/32, 32);
+	cross_entropy<<<gridSize, blockSize>>>(size, y, yhat, d_result);
     status = cudaDeviceSynchronize();
-    if (status != cudaSuccess) return (int) status;
-    stat = cublasSdot_v2(handle, size, ones_vector,1, yhat, 1, cost);
+    if (status != cudaSuccess) { syslog(LOG_ERR, "CudaDeviceSync failed with Error code: %d", (int)status); return status;}
+    stat = cublasSdot_v2(handle, size, ones_vector,1, d_result, 1, cost);
+    if(stat != CUBLAS_STATUS_SUCCESS ){ syslog(LOG_ERR, "CUBLAS dot product failed with Error code: %d", (int)stat); return stat;}
+
+    status = cudaMemcpy(h_result, d_result, size*sizeof(float), cudaMemcpyDeviceToHost);
+    if (status != cudaSuccess) { syslog(LOG_ERR, "CudaMemcpy of h_result failed with Error code: %d", (int)status); return status;}
+
+    for (int i=0; i< size;i++) {
+    	fprintf(fp, "i: %d yhat: %2.3f y : %2.3f result: %2.3f \n", i, h_yhat[i], h_y[i], h_result[i]);
+    	//fprintf(fp, "i: %d yhat: %2.3f y : %2.3f \n", i, yhat[i], y[i]);
+    	//fprintf(fp, "HelloWorld\n");
+    }
+    cudaFree(d_result);
+    free(h_result);
+    free(h_yhat);
+    free(h_y);
+    fclose(fp);
     *cost /= size;
-	if (stat != CUBLAS_STATUS_SUCCESS) return (int) stat;
 	return 0;
 }

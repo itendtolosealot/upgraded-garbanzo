@@ -1,4 +1,4 @@
-CPPFLAGS= -rdynamic -lineinfo
+CPPFLAGS= -rdynamic -lineinfo -g
 GENCODE=-gencode arch=compute_30,code=sm_30 -gencode arch=compute_35,code=sm_35 -gencode arch=compute_50,code=sm_50 -gencode arch=compute_53,code=sm_53 -gencode arch=compute_60,code=sm_60 -gencode arch=compute_61,code=sm_61 -gencode arch=compute_70,code=sm_70 -gencode arch=compute_72,code=sm_72 -gencode arch=compute_72,code=compute_72
 
 deep-learning: utils.o DeepLearning.o main.o

@@ -121,7 +121,7 @@ int main(int argc, char **argv) {
 			struct fcLayer* fc = &layers[i].fc_layer;
 			fscanf(fp, "%d %d %d\n", &fc->input_size, &fc->size, (int*)&fc->activation);
 			fc->input_size *= batch_size;
-			syslog(LOG_DEBUG, "Layer : %d Input size: %d Neurons: %d", i, fc->input_size, fc->size);
+			syslog(LOG_DEBUG, "Layer : %d Input size: %d Neurons: %d Activation %d", i, fc->input_size, fc->size, fc->activation);
 			get_matrix(&fc->weights, fc->input_size/batch_size, fc->size,1);
 		} else if (layers[i].type == CONVOLUTION){
 			struct convLayer* cl = &layers[i].conv_layer;
@@ -133,6 +133,7 @@ int main(int argc, char **argv) {
 			exit(1);
 		}
 	}
+	fclose(fp);
 	syslog(LOG_DEBUG, "Populated Struct Layers");
 
 	if ((status = (int) cudnnCreate(&cudnn)) != (int) CUDNN_STATUS_SUCCESS) {
@@ -148,6 +149,11 @@ int main(int argc, char **argv) {
 	syslog(LOG_DEBUG, "Create cublas handler");
 
 	get_matrix(&input_image, IMAGE_HEIGHT*IMAGE_WIDTH, batch_size, 1);
+	fp = fopen("input_image", "w");
+	for (int i= 0; i< IMAGE_WIDTH*IMAGE_HEIGHT*batch_size; i++) {
+			fprintf(fp, "Var %s Id: %d val: %2.3f \n", "Input", i, input_image[i]);
+	}
+	fclose(fp);
 	status = setup_descriptors (&desc, num_layers, layers);
 	if(status != 0) {
 		syslog(LOG_ERR, "Error while Descriptor Setup. Terminating the program");
@@ -172,11 +178,16 @@ int main(int argc, char **argv) {
 		create_output_arrays_in_gpu(&h_y, &d_y, &h_one_vector, &d_one_vector, n*c, h*w);
 	}
 	else if (layers[num_layers - 1].type == FULLYCONNECTED) {
-		create_output_arrays_in_gpu(&h_y,&d_y, &h_one_vector,&d_one_vector,layers[num_layers - 1].fc_layer.size, batch_size);
+		if ( create_output_arrays_in_gpu(&h_y,&d_y, &h_one_vector,&d_one_vector,layers[num_layers - 1].fc_layer.size, batch_size) != 0) {
+			syslog(LOG_ERR, "Unable to create h_y, d_y, h_onevector and d_one_vector");
+			exit(1);
+		}
+	//	printf("\n\n Printing inside Main Function \n\n");
+	//	print_matrix(h_y, layers[num_layers - 1].fc_layer.size, batch_size);
 	} else {
-		syslog(LOG_ERR, "Unknown Network Architecture. Terminating Program");
 		exit(1);
 	}
+
 	syslog(LOG_DEBUG, "Created yHat");
 
 	allocate_memory(desc, layers, num_layers, batch_size) ;
