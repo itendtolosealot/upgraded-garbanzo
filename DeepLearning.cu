@@ -210,11 +210,14 @@ int copy_input_to_device(struct descriptor* desc, struct layer* layers, int num_
 	FILE* fp = fopen("input_post_copy", "w");
 
 	stat = cudaMemcpy(desc[0].d_input, input_image, sizeof(float)*batch_size*IMAGE_WIDTH*IMAGE_HEIGHT, cudaMemcpyHostToDevice);
-	print_to_file(fp, desc[0].d_input, sizeof(float)*batch_size*IMAGE_WIDTH*IMAGE_HEIGHT, "Input_Post_copy", -1);
+	
 	if(stat != cudaSuccess) {
 		syslog(LOG_ERR, "Encountered Error %d when copying input_image to d_input", stat);
-		exit(1);
+		fclose(fp);
+		return stat;
 	}
+	print_to_file(fp, desc[0].d_input, sizeof(float)*batch_size*IMAGE_WIDTH*IMAGE_HEIGHT, "Input_Post_copy", -1);
+	fclose(fp);
 	for(int i=0; i< num_layers; i++) {
 		if(desc[i].valid)  {
 			status = cudnnGetFilter4dDescriptor((desc[i].filter_desc), &t, &format, &n,&c,&h,&w);
@@ -261,7 +264,7 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 				assert(desc[i].d_weights != NULL);
 				print_to_file(fp, desc[i].d_input, layers[i].fc_layer.input_size, "d_input", i);
 				//print_to_file(fp, desc[i].d_weights, layers[i].fc_layer.input_size, "d_weights", i);
-				print_to_file(fp, desc[i].d_y, layers[i].fc_layer.size*batch_size, "d_y_before_mult", -1);
+				print_to_file(fp, desc[i].d_y, layers[i].fc_layer.size*batch_size, "d_y_before_mult", i);
 
 				stat =  cublasSgemm(*handle,
 									CUBLAS_OP_N,

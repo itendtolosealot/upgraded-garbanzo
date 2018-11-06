@@ -20,51 +20,6 @@
 #include <syslog.h>
 #define FP "./layers.info"
 
-void simpleCostTest() {
-	float* h_y;
-	float* d_y;
-	float* h_yhat;
-	float* d_yhat;
-	float* h_one_vector;
-	float* d_one_vector;
-	float cost;
-	cublasHandle_t cublas;
-	int status;
-	int size = 8192;
-
-	cudaMalloc(&d_y, size*sizeof(float));
-	cudaMalloc(&d_yhat, size*sizeof(float));
-	cudaMalloc(&d_one_vector, size*sizeof(float));
-
-	h_one_vector = (float*) calloc(size, sizeof(float));
-	get_matrix(&h_y, size,1,1);
-	get_matrix(&h_yhat, size, 1,1);
-	for(int i=0;i<size;i++)
-			h_one_vector[i] = 1;
-	for (int i=0; i < 10; i++)
-			printf(" %2.3f", h_y[i]);
-	printf("\n");
-
-	cudaMemcpy(d_y, h_y, size*sizeof(float), cudaMemcpyHostToDevice);
-	cudaMemcpy(d_yhat, h_yhat, size*sizeof(float), cudaMemcpyHostToDevice);
-	cudaMemcpy(d_one_vector, h_one_vector, size*sizeof(float), cudaMemcpyHostToDevice);
-
-	if ((status = (int) cublasCreate(&cublas)) != (int) CUBLAS_STATUS_SUCCESS) {
-			syslog(LOG_ERR, "Unable to create CUDA handlers. Terminating the program");
-			exit(1);
-		}
-	computecost(d_y, d_yhat, d_one_vector, size, cublas, &cost);
-	free(h_y);
-	free(h_yhat);
-	free(h_one_vector);
-	cudaFree(d_y);
-	cudaFree(d_yhat);
-	cudaFree(d_one_vector);
-	cublasDestroy(cublas);
-	printf("Cost is %2.3f\n", cost);
-}
-
-
 int main(int argc, char **argv) {
 	FILE* fp;
 	int num_layers;
@@ -92,7 +47,6 @@ int main(int argc, char **argv) {
 
 	setlogmask (LOG_UPTO (LOG_DEBUG));
 	openlog ("deep-learning", LOG_CONS | LOG_PID | LOG_NDELAY, LOG_USER);
-	//simpleCostTest();
 	if ((fp=fopen(FP, "r"))==NULL) {
 		syslog (LOG_ERR, "Unable to find the layer information file. Terminating the program");
 		exit(1);
@@ -165,8 +119,6 @@ int main(int argc, char **argv) {
 			syslog(LOG_ERR, "Error while Descriptor config. Terminating the program");
 			exit(1);
 	}
-	//printf("CUBLAS_STATUS_SUCCESS %d", (int)CUBLAS_STATUS_SUCCESS);
-	//printf("CUDNN_STATUS_NOT_SUPPORTED %d \n", (int) CUDNN_STATUS_NOT_SUPPORTED);
 	syslog(LOG_DEBUG, "Configured Descriptors");
 
 	if (layers[num_layers - 1].type == CONVOLUTION) {
@@ -185,6 +137,7 @@ int main(int argc, char **argv) {
 	//	printf("\n\n Printing inside Main Function \n\n");
 	//	print_matrix(h_y, layers[num_layers - 1].fc_layer.size, batch_size);
 	} else {
+		syslog(LOG_ERR, "Unknown Network Architecture %d. Terminating the program", layers[num_layers - 1].type);
 		exit(1);
 	}
 
