@@ -207,17 +207,17 @@ int copy_input_to_device(struct descriptor* desc, struct layer* layers, int num_
 	cudnnDataType_t t;
 	cudnnTensorFormat_t format;
 	int n,c,h,w;
-	FILE* fp = fopen("input_post_copy", "w");
+//	FILE* fp = fopen("input_post_copy", "w");
 
 	stat = cudaMemcpy(desc[0].d_input, input_image, sizeof(float)*batch_size*IMAGE_WIDTH*IMAGE_HEIGHT, cudaMemcpyHostToDevice);
 	
 	if(stat != cudaSuccess) {
 		syslog(LOG_ERR, "Encountered Error %d when copying input_image to d_input", stat);
-		fclose(fp);
+//		fclose(fp);
 		return stat;
 	}
-	print_to_file(fp, desc[0].d_input, batch_size*IMAGE_WIDTH*IMAGE_HEIGHT, "Input_Post_copy", -1);
-	fclose(fp);
+//	print_to_file(fp, desc[0].d_input, batch_size*IMAGE_WIDTH*IMAGE_HEIGHT, "Input_Post_copy", -1);
+//	fclose(fp);
 	for(int i=0; i< num_layers; i++) {
 		if(desc[i].valid)  {
 			status = cudnnGetFilter4dDescriptor((desc[i].filter_desc), &t, &format, &n,&c,&h,&w);
@@ -262,9 +262,9 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 				assert(desc[i].d_input != NULL);
 				assert(desc[i].d_y != NULL );
 				assert(desc[i].d_weights != NULL);
-				print_to_file(fp, desc[i].d_input, layers[i].fc_layer.input_size, "d_input", i);
+				//print_to_file(fp, desc[i].d_input, layers[i].fc_layer.input_size, "d_input", i);
 				//print_to_file(fp, desc[i].d_weights, layers[i].fc_layer.input_size, "d_weights", i);
-				print_to_file(fp, desc[i].d_y, layers[i].fc_layer.size*batch_size, "d_y_before_mult", i);
+				//print_to_file(fp, desc[i].d_y, layers[i].fc_layer.size*batch_size, "d_y_before_mult", i);
 
 				stat =  cublasSgemm(*handle,
 									CUBLAS_OP_N,
@@ -299,7 +299,7 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 								return ff_stat;
 
 				}
-				print_to_file(fp, output_array, layers[i].fc_layer.size*batch_size, "output_array ", i);
+				//print_to_file(fp, output_array, layers[i].fc_layer.size*batch_size, "output_array ", i);
 				//printf("Num Layers: %d\n", num_layers);
 			}
 		}
@@ -314,7 +314,7 @@ int computecost(float* y, float* yhat, float* ones_vector, int size, cublasHandl
 	cudaError_t status;
 	cublasStatus_t stat;
 	int blockSize,gridSize;
-	FILE* fp = fopen("output.txt", "w");
+	//FILE* fp = fopen("output.txt", "w");
 	float* h_yhat = (float* )malloc(size*sizeof(float));
 	float* h_y = (float* )malloc(size*sizeof(float));
 	float* d_result;
@@ -337,17 +337,17 @@ int computecost(float* y, float* yhat, float* ones_vector, int size, cublasHandl
 
     status = cudaMemcpy(h_result, d_result, size*sizeof(float), cudaMemcpyDeviceToHost);
     if (status != cudaSuccess) { syslog(LOG_ERR, "CudaMemcpy of h_result failed with Error code: %d", (int)status); return status;}
-
+    /*
     for (int i=0; i< size;i++) {
     	fprintf(fp, "i: %d yhat: %2.3f y : %2.3f result: %2.3f \n", i, h_yhat[i], h_y[i], h_result[i]);
     	//fprintf(fp, "i: %d yhat: %2.3f y : %2.3f \n", i, yhat[i], y[i]);
     	//fprintf(fp, "HelloWorld\n");
-    }
+    }*/
     cudaFree(d_result);
     free(h_result);
     free(h_yhat);
     free(h_y);
-    fclose(fp);
+    //fclose(fp);
     *cost /= size;
 	return 0;
 }

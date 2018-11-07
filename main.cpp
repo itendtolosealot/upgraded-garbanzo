@@ -18,6 +18,7 @@
 #include "DeepLearning.h"
 #include "utils.h"
 #include <syslog.h>
+#include <time.h>
 #define FP "./layers.info"
 
 int main(int argc, char **argv) {
@@ -30,7 +31,7 @@ int main(int argc, char **argv) {
 	cublasHandle_t cublas;
 	int status;
 	struct Status ff_stat;
-	int batch_size = 32;
+	int batch_size = 1024;
 	float* input_image;
 	float* d_y;
 	float* h_y;
@@ -40,12 +41,9 @@ int main(int argc, char **argv) {
 	float* test;
 	int n, c, h, w;
 	cudnnDataType_t t;
+	clock_t start, end;
 
-	//cudaMalloc((void**) &test, 24*sizeof(float));
-	//printf("Hello World \n");
-	//fflush(stdout);
-
-	setlogmask (LOG_UPTO (LOG_DEBUG));
+	setlogmask (LOG_UPTO (LOG_ERR));
 	openlog ("deep-learning", LOG_CONS | LOG_PID | LOG_NDELAY, LOG_USER);
 	if ((fp=fopen(FP, "r"))==NULL) {
 		syslog (LOG_ERR, "Unable to find the layer information file. Terminating the program");
@@ -108,6 +106,7 @@ int main(int argc, char **argv) {
 			fprintf(fp, "Var %s Id: %d val: %2.3f \n", "Input", i, input_image[i]);
 	}
 	fclose(fp);
+	start = clock();
 	status = setup_descriptors (&desc, num_layers, layers);
 	if(status != 0) {
 		syslog(LOG_ERR, "Error while Descriptor Setup. Terminating the program");
@@ -170,13 +169,27 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 	syslog(LOG_DEBUG, "Computed the Cost");
+	printf("The cost of the Optimization Function using GPU is %2.7f \n", cost);
+	end = clock();
+	printf("Time taken to execute on GPU: %2.3f ms \n", 1000*(double(end-start))/(CLOCKS_PER_SEC));
+
+	syslog(LOG_DEBUG, "Starting CPU based Computation");
+	cost = 0;
+	start = clock();
+	NNbyCPU(layers, num_layers, input_image, h_y, batch_size, &cost);
+	printf("The cost of the Optimization Function using CPU is %2.7f \n", cost);
+	end = clock();
+	printf("Time taken to execute on CPU: %2.3f ms \n", 1000*(double(end-start))/(CLOCKS_PER_SEC));
 
 	status = destroy_descriptors (desc, num_layers);
-	delete_output_arrays_from_gpu(h_y, d_y, h_one_vector, d_one_vector);
+	if(status != 0) {
+		syslog(LOG_ERR, "Descriptors could not be cleaned up. Terminating....");
+		exit(1);
+	}
+	status = delete_output_arrays_from_gpu(h_y, d_y, h_one_vector, d_one_vector);
 	if(status != 0) {
 		syslog(LOG_ERR, "Error in Cleanup. Terminating the program");
 		exit(1);
 	}
 	syslog(LOG_DEBUG, "Destroyed Descriptors");
-	printf("The cost of the Optimization Function is %2.3f \n", cost);
 }
