@@ -28,7 +28,7 @@ void  get_matrix(float** mat, int size_x, int size_y, int type ) {
         matrix = (float*) malloc(size_x * size_y*sizeof(float));
         for (int i=0;i<size_x*size_y;i++) {
         	if (type == 1)
-            	matrix[i] = (rand()*1.0)/(RAND_MAX*1.0);
+            	matrix[i] = ((rand()*1.0)/(RAND_MAX)-0.5)/2.0;
             else
             	matrix[i] = 0;
         }
@@ -71,7 +71,7 @@ void  print_to_file(FILE* fp, float* x, int size, const char* varName, int layer
  int create_output_arrays_in_gpu(float** h_y, float** d_y, float** h_one_vec, float** d_one_vec, int size_x, int size_y) {
 	 	cudaError_t status;
 		get_matrix(h_y, size_x, size_y,1);
-		print_matrix(*h_y, size_x, size_y);
+		//print_matrix(*h_y, size_x, size_y);
 		status = cudaMalloc(d_y, size_x*size_y*sizeof(float));
 		if (status != cudaSuccess) { syslog(LOG_ERR, "Allocation of d_y failed with error code %d", status); return status;}
 

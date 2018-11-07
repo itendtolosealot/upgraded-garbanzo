@@ -216,7 +216,7 @@ int copy_input_to_device(struct descriptor* desc, struct layer* layers, int num_
 		fclose(fp);
 		return stat;
 	}
-	print_to_file(fp, desc[0].d_input, sizeof(float)*batch_size*IMAGE_WIDTH*IMAGE_HEIGHT, "Input_Post_copy", -1);
+	print_to_file(fp, desc[0].d_input, batch_size*IMAGE_WIDTH*IMAGE_HEIGHT, "Input_Post_copy", -1);
 	fclose(fp);
 	for(int i=0; i< num_layers; i++) {
 		if(desc[i].valid)  {
@@ -300,7 +300,7 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 
 				}
 				print_to_file(fp, output_array, layers[i].fc_layer.size*batch_size, "output_array ", i);
-				printf("Num Layers: %d\n", num_layers);
+				//printf("Num Layers: %d\n", num_layers);
 			}
 		}
 	ff_stat.failure=NONE;
@@ -327,8 +327,8 @@ int computecost(float* y, float* yhat, float* ones_vector, int size, cublasHandl
 	if (status != cudaSuccess) { syslog(LOG_ERR, "Memcpy of yhat failed with Error code: %d", (int)status); return status;}
 	status = cudaMemcpy(h_y, y, size*sizeof(float), cudaMemcpyDeviceToHost);
 	if (status != cudaSuccess) { syslog(LOG_ERR, "Memcpy of y failed with Error code: %d", (int)status); return status;}
-	 printf("\n\n Printing Data from the GPU: d_y \n\n");
-	    print_matrix(h_y, (int)size/32, 32);
+	//printf("\n\n Printing Data from the GPU: d_y \n\n");
+	//print_matrix(h_y, (int)size/32, 32);
 	cross_entropy<<<gridSize, blockSize>>>(size, y, yhat, d_result);
     status = cudaDeviceSynchronize();
     if (status != cudaSuccess) { syslog(LOG_ERR, "CudaDeviceSync failed with Error code: %d", (int)status); return status;}
