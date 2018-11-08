@@ -191,5 +191,7 @@ int main(int argc, char **argv) {
 		syslog(LOG_ERR, "Error in Cleanup. Terminating the program");
 		exit(1);
 	}
+	status = destroy_layers(layers, input_image, num_layers);
+
 	syslog(LOG_DEBUG, "Destroyed Descriptors");
 }

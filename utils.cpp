@@ -11,13 +11,14 @@
 #include <math.h>
 #include <assert.h>
 #include "utils.h"
+#include "mkl.h"
 
 void NNbyCPU(struct layer* layers, int num_layers, float* input_image, float* y, int batch_size, float* cost) {
 	//FILE* fp = fopen("values_cpu.txt", "w");
 	float** output = (float**) calloc(num_layers, sizeof(float*));
 	float* input;
 	for(int i=0; i< num_layers;i++) {
-		output[i] = (float*) calloc(layers[i].fc_layer.size*batch_size, sizeof(float));
+		output[i] = (float*) mkl_malloc(layers[i].fc_layer.size*batch_size*sizeof(float), 32);
 	}
 
 	for(int i=0; i< num_layers;i++) {
@@ -27,9 +28,6 @@ void NNbyCPU(struct layer* layers, int num_layers, float* input_image, float* y,
 		int k = (layers[i].fc_layer.input_size)/batch_size;
 		int n = batch_size;
 		MultiplyCPU(layers[i].fc_layer.weights,input,output[i], m, k, n);
-		/*for(int j=0; j < m*n;j++ ){
-			fprintf(fp, "Var d_y in Layer %d Id : %d val: %2.3f \n", i,j, output[i][j]);
-		}*/
 		sigmoidCPU(output[i], m*n);
 	}
 	//fclose(fp);
@@ -37,14 +35,14 @@ void NNbyCPU(struct layer* layers, int num_layers, float* input_image, float* y,
 
 	for(int i=0; i< num_layers;i++) {
 		assert(output[i] != NULL);
-		free(output[i]);
+		mkl_free(output[i]);
 	}
 	free(output);
 }
 
 
 void MultiplyCPU(float* A, float* B, float* C, int m, int k, int n) {
-	for(int i=0;i< m; i++) {
+	/*for(int i=0;i< m; i++) {
 		for (int j=0; j < n; j++) {
 			float sum = 0;
 			for (int l=0; l< k; l++) {
@@ -60,7 +58,8 @@ void MultiplyCPU(float* A, float* B, float* C, int m, int k, int n) {
 			//printf("i: %d j: %d m: %d n: %d k: %d value: %2.3f", i, j, m, k, n, sum);
 			//C[i*n+j] = sum;
 		}
-	}
+	}*/
+	cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans, m, n, k, 1.0, A, k, B, n, 0, C, n);
 }
 
 void sigmoidCPU(float* A, int size) {
@@ -83,7 +82,7 @@ void computeCostCPU(float* y, float* yhat, int size, float* cost) {
 void  get_matrix(float** mat, int size_x, int size_y, int type ) {
 
         float* matrix;
-        matrix = (float*) malloc(size_x * size_y*sizeof(float));
+        matrix = (float*) mkl_malloc(size_x * size_y*sizeof(float), 32);
         for (int i=0;i<size_x*size_y;i++) {
         	if (type == 1)
             	matrix[i] = ((rand()*1.0)/(RAND_MAX)-0.5)/2.0;
@@ -156,3 +155,15 @@ int  delete_output_arrays_from_gpu(float* h_y, float* d_y,float* h_one_vec, floa
 	if(status != cudaSuccess) return (int)status;
 }
 
+int destroy_layers(struct layer* layers, float* input_image, int num_layers) {
+	for (int i = 0; i < num_layers; i++) {
+		if (layers[i].type == FULLYCONNECTED) {
+			mkl_free(layers[i].fc_layer.weights);
+		}
+		else if (layers[i].type == CONVOLUTION) {
+			mkl_free(layers[i].conv_layer.filter);
+		}
+	}
+	mkl_free(input_image);
+	free(layers);
+}
