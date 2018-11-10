@@ -13,12 +13,23 @@
 #include "utils.h"
 #include "mkl.h"
 
+float* replicate_bias_for_batch(int size, int batch_size, float* bias) {
+	float* replicated_bias = (float *) mkl_malloc(sizeof(float)*size*batch_size, 64);
+	for(int i=0; i < batch_size;i++) {
+		memcpy(replicated_bias + i*size, bias, size*sizeof(float));
+	}
+	return replicated_bias;
+}
+
 void NNbyCPU(struct layer* layers, int num_layers, float* input_image, float* y, int batch_size, float* cost) {
 	//FILE* fp = fopen("values_cpu.txt", "w");
-	float** output = (float**) calloc(num_layers, sizeof(float*));
+	float** output = (float**) mkl_calloc(num_layers, sizeof(float*), 64);
+	float** bias = (float**) mkl_calloc(num_layers, sizeof(float*), 64);
 	float* input;
+
 	for(int i=0; i< num_layers;i++) {
-		output[i] = (float*) mkl_malloc(layers[i].fc_layer.size*batch_size*sizeof(float), 32);
+		output[i] = (float*) mkl_malloc(layers[i].fc_layer.size*batch_size*sizeof(float), 64);
+		bias[i] = replicate_bias_for_batch(layers[i].fc_layer.size, batch_size, layers[i].fc_layer.bias);
 	}
 
 	for(int i=0; i< num_layers;i++) {
@@ -27,7 +38,7 @@ void NNbyCPU(struct layer* layers, int num_layers, float* input_image, float* y,
 		int m = layers[i].fc_layer.size;
 		int k = (layers[i].fc_layer.input_size)/batch_size;
 		int n = batch_size;
-		MultiplyCPU(layers[i].fc_layer.weights,input,output[i], m, k, n);
+		MultiplyCPU(layers[i].fc_layer.weights,input,output[i], bias[i], m, k, n);
 		sigmoidCPU(output[i], m*n);
 	}
 	//fclose(fp);
@@ -36,12 +47,14 @@ void NNbyCPU(struct layer* layers, int num_layers, float* input_image, float* y,
 	for(int i=0; i< num_layers;i++) {
 		assert(output[i] != NULL);
 		mkl_free(output[i]);
+		mkl_free(bias[i]);
 	}
-	free(output);
+	mkl_free(output);
+	mkl_free(bias);
 }
 
 
-void MultiplyCPU(float* A, float* B, float* C, int m, int k, int n) {
+void MultiplyCPU(float* A, float* B, float* C, float* X,  int m, int k, int n) {
 	/*for(int i=0;i< m; i++) {
 		for (int j=0; j < n; j++) {
 			float sum = 0;
@@ -59,7 +72,8 @@ void MultiplyCPU(float* A, float* B, float* C, int m, int k, int n) {
 			//C[i*n+j] = sum;
 		}
 	}*/
-	cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans, m, n, k, 1.0, A, k, B, n, 0, C, n);
+	cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans, m, n, k, 1.0, A, m, B, k, 0, C, m);
+	cblas_saxpy(m*n, 1.0, X, 1, C, 1);
 }
 
 void sigmoidCPU(float* A, int size) {
@@ -82,7 +96,7 @@ void computeCostCPU(float* y, float* yhat, int size, float* cost) {
 void  get_matrix(float** mat, int size_x, int size_y, int type ) {
 
         float* matrix;
-        matrix = (float*) mkl_malloc(size_x * size_y*sizeof(float), 32);
+        matrix = (float*) mkl_malloc(size_x * size_y*sizeof(float), 64);
         for (int i=0;i<size_x*size_y;i++) {
         	if (type == 1)
             	matrix[i] = ((rand()*1.0)/(RAND_MAX)-0.5)/2.0;
@@ -147,7 +161,7 @@ void  print_to_file(FILE* fp, float* x, int size, const char* varName, int layer
 
 int  delete_output_arrays_from_gpu(float* h_y, float* d_y,float* h_one_vec, float* d_one_vec) {
 	cudaError_t status;
-	free(h_y);
+	mkl_free(h_y);
 	free(h_one_vec);
 	status = cudaFree(d_y);
 	if(status != cudaSuccess) return (int) status;
@@ -167,3 +181,24 @@ int destroy_layers(struct layer* layers, float* input_image, int num_layers) {
 	mkl_free(input_image);
 	free(layers);
 }
+
+double gigaFlop(struct layer* layers, int num_layers, int batch_size) {
+
+	double gFlops = 0;
+	int input_size = IMAGE_WIDTH*IMAGE_HEIGHT*batch_size;
+
+	for(int i=0; i<num_layers;i++) {
+		if(layers[i].type==FULLYCONNECTED) {
+			gFlops += 2.0*(double)(layers[i].fc_layer.input_size)*(double)(layers[i].fc_layer.size);
+			gFlops += (double) layers[i].fc_layer.size*batch_size;
+			if(i==num_layers-1)
+				gFlops+= 5.0*(double) layers[i].fc_layer.size*batch_size;
+		} else {
+			if(i!= 0)
+				input_size = (input_size - layers[i-1].conv_layer.filter_size + 2*layers[i-1].conv_layer.padding)/layers[i-1].conv_layer.stride + 1;
+				gFlops += 2.0* (double)(layers[i].conv_layer.filter_size*layers[i].conv_layer.filter_size*((input_size - layers[i].conv_layer.filter_size + 2*layers[i].conv_layer.padding)/layers[i].conv_layer.stride +1));
+		}
+	}
+	return gFlops;
+}
+

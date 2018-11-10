@@ -19,6 +19,7 @@
 #include "utils.h"
 #include <syslog.h>
 #include <time.h>
+#include <sys/time.h>
 #define FP "./layers.info"
 
 int main(int argc, char **argv) {
@@ -31,7 +32,7 @@ int main(int argc, char **argv) {
 	cublasHandle_t cublas;
 	int status;
 	struct Status ff_stat;
-	int batch_size = 1024;
+	int batch_size;
 	float* input_image;
 	float* d_y;
 	float* h_y;
@@ -40,6 +41,7 @@ int main(int argc, char **argv) {
 	float cost;
 	float* test;
 	int n, c, h, w;
+	int num_turns;
 	cudnnDataType_t t;
 	clock_t start, end;
 
@@ -52,7 +54,7 @@ int main(int argc, char **argv) {
 		syslog(LOG_DEBUG, "Obtained file Handler for the file %s", FP);
 	}
 
-	fscanf(fp, "%d \n", &num_layers);
+	fscanf(fp, "%d %d %d \n", &num_layers, &batch_size, &num_turns);
 	syslog(LOG_DEBUG, "Number of Layers: %d", num_layers);
 	if (num_layers < 0 || num_layers > 10) {
 		syslog(LOG_ERR, "Number of layers must be between 1 and 10. Obtained %d. Terminating", num_layers);
@@ -75,6 +77,7 @@ int main(int argc, char **argv) {
 			fc->input_size *= batch_size;
 			syslog(LOG_DEBUG, "Layer : %d Input size: %d Neurons: %d Activation %d", i, fc->input_size, fc->size, fc->activation);
 			get_matrix(&fc->weights, fc->input_size/batch_size, fc->size,1);
+			get_matrix(&fc->bias, fc->size, 1, 1);
 		} else if (layers[i].type == CONVOLUTION){
 			struct convLayer* cl = &layers[i].conv_layer;
 			fscanf(fp, "%d %d %d %d %d %d %d\n", &cl->filter_size, &cl->padding, &cl->stride,
@@ -106,7 +109,6 @@ int main(int argc, char **argv) {
 			fprintf(fp, "Var %s Id: %d val: %2.3f \n", "Input", i, input_image[i]);
 	}
 	fclose(fp);
-	start = clock();
 	status = setup_descriptors (&desc, num_layers, layers);
 	if(status != 0) {
 		syslog(LOG_ERR, "Error while Descriptor Setup. Terminating the program");
@@ -155,32 +157,49 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 	syslog(LOG_DEBUG, "Copied Input to Device");
-
+	float diff_1 = 0;
+	float diff_2 = 0;
+	struct timeval start_timeval, end_timeval;
+	for(int i=0; i < num_turns; i++) {
+	gettimeofday(&start_timeval, NULL);
 	ff_stat = feedforward(&cudnn, &cublas ,  desc, layers, num_layers, batch_size);
+	gettimeofday(&end_timeval, NULL);
+	diff_1 += (end_timeval.tv_sec - start_timeval.tv_sec)*1000.0 + (end_timeval.tv_usec - start_timeval.tv_usec)*1.0/1000.0;
+
+
 	if(ff_stat.failure != NONE) {
 		syslog(LOG_ERR, "Error in Feed-forward. Error in %d . Received CUDNN Error %d CUBLAS ERROR %d", ff_stat.layer, ff_stat.cudnn_stat, ff_stat.cublas_stat);
 		exit(1);
 	}
 	syslog(LOG_DEBUG, "Completed Feedforward");
-
+	gettimeofday(&start_timeval, NULL);
 	status = computecost(d_y, desc[num_layers-1].d_output, d_one_vector, layers[num_layers - 1].fc_layer.size*batch_size, cublas, &cost);
+	gettimeofday(&end_timeval, NULL);
+	diff_2 +=  (end_timeval.tv_sec - start_timeval.tv_sec)*1000.0 + (end_timeval.tv_usec - start_timeval.tv_usec)*1.0/1000.0;
 	if(status != 0) {
 		syslog(LOG_ERR, "Error in Compute cost. Terminating the program");
 		exit(1);
 	}
 	syslog(LOG_DEBUG, "Computed the Cost");
-	printf("The cost of the Optimization Function using GPU is %2.7f \n", cost);
-	end = clock();
-	printf("Time taken to execute on GPU: %2.3f ms \n", 1000*(double(end-start))/(CLOCKS_PER_SEC));
-
+	}
+	double flop_per_cycle = gigaFlop(layers, num_layers, batch_size)*1.0/1e9;
+	printf("The cost of the Cost Function using GPU is %2.7f \n", cost);
+	printf("Feedforward Time: %2.5f ms\n",diff_1/num_turns);
+	printf("Compute cost Time: %2.5f ms\n",diff_2/num_turns);
+	printf("Total Time on GPU: %2.3f ms \n", (diff_1+diff_2)/num_turns);
+	printf("GPU Giga Flops: %2.4f\n", (double)flop_per_cycle *num_turns*1000/(diff_1+diff_2));
 	syslog(LOG_DEBUG, "Starting CPU based Computation");
-	cost = 0;
-	start = clock();
-	NNbyCPU(layers, num_layers, input_image, h_y, batch_size, &cost);
-	printf("The cost of the Optimization Function using CPU is %2.7f \n", cost);
-	end = clock();
-	printf("Time taken to execute on CPU: %2.3f ms \n", 1000*(double(end-start))/(CLOCKS_PER_SEC));
-
+	float cost_cpu = 0;
+	gettimeofday(&start_timeval, NULL);
+	for(int i=0; i< num_turns; i++) {
+	NNbyCPU(layers, num_layers, input_image, h_y, batch_size, &cost_cpu);
+	}
+	gettimeofday(&end_timeval, NULL);
+	diff_2 =  (end_timeval.tv_sec - start_timeval.tv_sec)*1000.0 + (end_timeval.tv_usec - start_timeval.tv_usec)*1.0/1000.0;
+	printf("The cost of the Optimization Function using CPU is %2.7f \n", cost_cpu);
+	printf("Time taken to execute on CPU: %2.3f ms \n", diff_2*1.0/(1.0*num_turns));
+	printf("CPU Giga Flops: %2.3f\n", (double)flop_per_cycle*num_turns*1000.0/diff_2);
+	printf("Error between CPU and GPU: %2.5f %% \n", (cost-cost_cpu)*100.0/cost);
 	status = destroy_descriptors (desc, num_layers);
 	if(status != 0) {
 		syslog(LOG_ERR, "Descriptors could not be cleaned up. Terminating....");

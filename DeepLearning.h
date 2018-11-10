@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include <cublas_v2.h>
+#include <time.h>
 #include <sys/time.h>
 #include <cudnn.h>
 #ifndef DEEPLEARNING_H_
@@ -49,6 +50,7 @@ struct fcLayer {
 	int size;
 	int input_size;
 	float* weights;
+	float* bias;
 	cudnnActivationMode_t activation;
 };
 
@@ -83,6 +85,7 @@ struct descriptor {
 	float* d_y;
 	float* d_output;
 	float* d_weights;
+	float* d_bias;
 	float* d_workspace;
 };
 int setup_descriptors ( struct descriptor** desc, int num_layers, struct layer *layers);
