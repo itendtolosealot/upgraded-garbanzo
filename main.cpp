@@ -116,7 +116,7 @@ int main(int argc, char **argv) {
 	}
 	syslog(LOG_DEBUG, "Created Descriptors");
 	status = configure_descriptors(&cudnn, desc, num_layers, layers, batch_size);
-	if(status != 0) {
+	if(status != 0) {`
 			syslog(LOG_ERR, "Error while Descriptor config. Terminating the program");
 			exit(1);
 	}

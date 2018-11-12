@@ -14,7 +14,7 @@
 #include "DeepLearning.h"
 #include "utils.h"
 
-__global__ void cross_entropy(int array_size, float* y, float* yhat)
+__global__ void cross_entropy(int array_size, float* y, float* yhat, float* sum_exponents)
 {
   int i = blockIdx.x*blockDim.x + threadIdx.x;
   float res = 0;
@@ -27,7 +27,15 @@ __global__ void cross_entropy(int array_size, float* y, float* yhat)
 	  yhat[i] = res;
   }
 }
-
+__global__ void softmax(int array_size, float* yhat)
+{
+	int i = blockIdx.x*blockDim.x + threadIdx.x;
+	float res = 0;
+	if (i < array_size) {
+		res = exp(yhat[i]);
+		yhat[i] = res;
+	}
+}
 
 int setup_descriptors ( struct descriptor** desc, int num_layers, struct layer *layers) {
 	struct descriptor* d;
@@ -359,28 +367,61 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 	return ff_stat;
 }
 
-/*
+
 struct Status feedback(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct descriptor* desc, struct layer *layers, int num_layers, int batch_size) {
 	struct Status ff_stat;
 	cudnnStatus_t status;
 	cublasStatus_t stat;
 	stat = CUBLAS_STATUS_SUCCESS;
 	status= CUDNN_STATUS_SUCCESS;
+	float alpha = 1.0;
+	float beta = 0.0;
+
+	for (int i = num_layers - 1; i >= 0; i--) {
+		if (desc[i].valid) {
+
+			float *dout = (i == num_layers - 1) ? desc[i].d_dout : desc[i + 1].d_din;
+			status = cudnnConvolutionBackwardData(	*handle, &alpha, desc[i].filter_desc, desc[i].d_filter, desc[i].dout_desc, dout,
+													desc[i].conv_desc, layers[i].conv_layer.algorithm, desc[i].d_workspace, desc[i].workspace_size,
+													&beta, desc[i].din_desc, desc[i].d_din);
+			if (status != CUDNN_STATUS_SUCCESS) {
+				destroy_descriptors(desc, num_layers);
+				return status;
+			}
+			status = cudnnConvolutionBackwardFilter(*handle, &alpha, desc[i].input_desc, desc[i].d_input,
+													desc[i].dout_desc, dout, desc[i].conv_desc, layers[i].conv_layer.algorithm
+													desc[i].d_workspace, desc[i].workspace_size, &beta, desc[i].dfilter_desc, desc[i].d_df);
+			if (status != CUDNN_STATUS_SUCCESS) {
+				destroy_descriptors(desc, num_layers);
+				return status;
+			}
+		}
+		else {
+			return ff_stat;
+		}
+	}
+
 	return ff_stat;
 
 }
 
-*/
+
 
 int computecost(float* y, float* yhat, float* ones_vector, int size, cublasHandle_t handle, float* cost) {
 	cudaError_t status;
 	cublasStatus_t stat;
+	float sum_exponents;
 	int blockSize,gridSize;
 	blockSize = 1024;
 	gridSize = (int) ceil ((float ) size/(blockSize));
-	cross_entropy<<<gridSize, blockSize>>>(size, y, yhat);
+	softmax << <gridSize, blockSize >> > (size, yhat);
+	status = cudaDeviceSynchronize();
+	if (status != cudaSuccess) { syslog(LOG_ERR, "CudaDeviceSync failed with Error code: %d during Kernel run of softmax", (int)status); return status; }
+	stat = cublasSdot_v2(handle, size, ones_vector, 1, yhat, 1, &sum_exponents);
+	if (stat != CUBLAS_STATUS_SUCCESS) { syslog(LOG_ERR, "CUBLAS dot product failed with Error code: %d", (int)stat); return stat; }
+	cross_entropy<<<gridSize, blockSize>>>(size, y, yhat, sum_exponents);
     status = cudaDeviceSynchronize();
-    if (status != cudaSuccess) { syslog(LOG_ERR, "CudaDeviceSync failed with Error code: %d during Kernel run", (int)status); return status;}
+    if (status != cudaSuccess) { syslog(LOG_ERR, "CudaDeviceSync failed with Error code: %d during Kernel run of cross_entropy", (int)status); return status;}
     stat = cublasSdot_v2(handle, size, ones_vector,1, yhat, 1, cost);
     status = cudaDeviceSynchronize();
     if (status != cudaSuccess) { syslog(LOG_ERR, "CudaDeviceSync failed with Error code: %d in cublasSdot", (int)status); return status;}

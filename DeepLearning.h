@@ -73,13 +73,19 @@ struct layer {
 struct descriptor {
 	bool valid;
 	cudnnTensorDescriptor_t input_desc;
+	cudnnTensorDescriptor_t din_desc;
 	cudnnTensorDescriptor_t y_desc;
+	cudnnTensorDescriptor_t dy_desc;
 	cudnnTensorDescriptor_t output_desc;
+	cudnnTensorDescriptor_t dout_desc;
 	cudnnFilterDescriptor_t filter_desc;
+	cudnnFilterDescriptor_t dfilter_desc;
 	cudnnConvolutionDescriptor_t conv_desc;
 	cudnnConvolutionFwdAlgo_t algo_desc;
 	cudnnActivationDescriptor_t acti_desc;
 	unsigned long workspace_size;
+	// Naming convention: The first 'd' stands for "device" indiacting that the array lives in the device. The second d, whenever used 
+	// stands for delta or derivative. 
 	float* d_input;
 	float* d_filter;
 	float* d_y;
@@ -87,6 +93,12 @@ struct descriptor {
 	float* d_weights;
 	float* d_bias;
 	float* d_workspace;
+	float* d_din;
+	float* d_df;
+	float* d_dy;
+	float* d_dout;
+	float* d_dw;
+	float* d_db;
 };
 int setup_descriptors ( struct descriptor** desc, int num_layers, struct layer *layers);
 int destroy_descriptors (struct descriptor* desc, int num_layers);
