@@ -96,14 +96,20 @@ void computeCostCPU(float* y, float* yhat, int size, float* cost) {
 void  get_matrix(float** mat, int size_x, int size_y, int type ) {
 
         float* matrix;
+		int index;
         matrix = (float*) mkl_malloc(size_x * size_y*sizeof(float), 64);
         for (int i=0;i<size_x*size_y;i++) {
-        	if (type == 1)
-            	matrix[i] = ((rand()*1.0)/(RAND_MAX)-0.5)/2.0;
-            else
-            	matrix[i] = 0;
+			if (type == 0)
+				matrix[i] = 0;
+			else if(type ==1)
+            	matrix[i] = ((rand()*1.0)/(RAND_MAX)-0.5)/2.0;          
         }
-
+		if (type == 2) {
+			for (int i = 0; i < size_x; i++) {
+				index = rand() % size_y;
+				matrix[i*size_y + index] = 1;
+			}
+		}
         *mat = matrix;
 }
 
@@ -141,7 +147,7 @@ void  print_to_file(FILE* fp, float* x, int size, const char* varName, int layer
 
  int create_output_arrays_in_gpu(float** h_y, float** d_y, float** h_one_vec, float** d_one_vec, int size_x, int size_y) {
 	 	cudaError_t status;
-		get_matrix(h_y, size_x, size_y,1);
+		get_matrix(h_y, size_x, size_y,2);
 		//print_matrix(*h_y, size_x, size_y);
 		status = cudaMalloc(d_y, size_x*size_y*sizeof(float));
 		if (status != cudaSuccess) { syslog(LOG_ERR, "Allocation of d_y failed with error code %d", status); return status;}

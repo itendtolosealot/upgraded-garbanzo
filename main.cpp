@@ -131,7 +131,7 @@ int main(int argc, char **argv) {
 		create_output_arrays_in_gpu(&h_y, &d_y, &h_one_vector, &d_one_vector, n*c, h*w);
 	}
 	else if (layers[num_layers - 1].type == FULLYCONNECTED) {
-		if ( create_output_arrays_in_gpu(&h_y,&d_y, &h_one_vector,&d_one_vector,layers[num_layers - 1].fc_layer.size, batch_size) != 0) {
+		if ( create_output_arrays_in_gpu(&h_y,&d_y, &h_one_vector,&d_one_vector, batch_size, layers[num_layers - 1].fc_layer.size) != 0) {
 			syslog(LOG_ERR, "Unable to create h_y, d_y, h_onevector and d_one_vector");
 			exit(1);
 		}

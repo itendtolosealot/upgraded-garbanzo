@@ -14,19 +14,22 @@
 #include "DeepLearning.h"
 #include "utils.h"
 
-__global__ void cross_entropy(int array_size, float* y, float* yhat, float* sum_exponents)
+/* We calculate the sum_exponents for each example in the batch, and use that value to calculate the cross entropy*/
+__global__ void cross_entropy(int batch_size, int output_size, float* y, float* yhat, float* sum_exponents)
 {
   int i = blockIdx.x*blockDim.x + threadIdx.x;
+  int sum_exp_index = i / output_size;
   float res = 0;
-  if (i < array_size) {
-
-	  if((yhat[i] == 0)|| (yhat[i] == 1))
-		  res = 0;
-	  else
-		  res = log(1-yhat[i])*y[i] + log(yhat[i])*(1-y[i]);
+  if (i < batch_size*output_size) {
+	  if ((yhat[i] == 0) || (yhat[i] == 1))
+			  res = 0;
+		  else
+			  res = log(1 - yhat[i] / (sum_exponents[sum_exp_index]))*y[i] + log(yhat[i] / (sum_exponents[sum_exp_index]))*(1 - y[i]);
+	  }
 	  yhat[i] = res;
-  }
 }
+
+/* We calculate the exponent of the output for every output*/
 __global__ void softmax(int array_size, float* yhat)
 {
 	int i = blockIdx.x*blockDim.x + threadIdx.x;
@@ -173,9 +176,9 @@ int allocate_memory(struct descriptor* desc, struct layer* layers, int num_layer
 					h = 1;
 					w = layers[i - 1].fc_layer.size;
 				}
-				if(status != CUDNN_STATUS_SUCCESS) return (int)status;
+				if (status != CUDNN_STATUS_SUCCESS) { return (int)status; }
 				stat = cudaMalloc(&desc[i].d_input, n*c*h*w*sizeof(float));
-				if(stat != cudaSuccess) return stat;
+				if (stat != cudaSuccess) { return stat; }
 			}
 			status = cudnnGetFilter4dDescriptor((desc[i].filter_desc), &t, &format, &n,&c,&h,&w);
 			cudaMalloc(&desc[i].d_filter, n*c*h*w*sizeof(float));
@@ -407,22 +410,24 @@ struct Status feedback(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct desc
 
 
 
-int computecost(float* y, float* yhat, float* ones_vector, int size, cublasHandle_t handle, float* cost) {
+int computecost(float* y, float* yhat, float* ones_vector, int batch_size, int output_size, cublasHandle_t handle, float* cost) {
 	cudaError_t status;
 	cublasStatus_t stat;
-	float sum_exponents;
+	float* sum_exponents = cudaMalloc(sizeof(float)*batch_size);
+	float alpha = 1;
+	float beta = 0;
 	int blockSize,gridSize;
 	blockSize = 1024;
-	gridSize = (int) ceil ((float ) size/(blockSize));
-	softmax << <gridSize, blockSize >> > (size, yhat);
+	gridSize = (int) ceil ((float ) batch_size*output_size/(blockSize));
+	softmax << <gridSize, blockSize >> > (batch_size*output_size, yhat);
 	status = cudaDeviceSynchronize();
 	if (status != cudaSuccess) { syslog(LOG_ERR, "CudaDeviceSync failed with Error code: %d during Kernel run of softmax", (int)status); return status; }
-	stat = cublasSdot_v2(handle, size, ones_vector, 1, yhat, 1, &sum_exponents);
-	if (stat != CUBLAS_STATUS_SUCCESS) { syslog(LOG_ERR, "CUBLAS dot product failed with Error code: %d", (int)stat); return stat; }
-	cross_entropy<<<gridSize, blockSize>>>(size, y, yhat, sum_exponents);
+	stat = cublasSgemm(*handle, CUBLAS_OP_N, CUBLAS_OP_N, 1, batch_size, output_size, &alpha, ones_vector, 1, yhat, output_size, &beta, sum_exponents, 1);
+	if (stat != CUBLAS_STATUS_SUCCESS) { syslog(LOG_ERR, "CUBLAS matrix mult to compute sum_exponents failed with Error code: %d ", (int)stat); return stat;}
+	cross_entropy<<<gridSize, blockSize>>>(batch_size, output_size, y, yhat, sum_exponents);
     status = cudaDeviceSynchronize();
     if (status != cudaSuccess) { syslog(LOG_ERR, "CudaDeviceSync failed with Error code: %d during Kernel run of cross_entropy", (int)status); return status;}
-    stat = cublasSdot_v2(handle, size, ones_vector,1, yhat, 1, cost);
+    stat = cublasSdot_v2(handle, batch_size*output_size, ones_vector,1, yhat, 1, cost);
     status = cudaDeviceSynchronize();
     if (status != cudaSuccess) { syslog(LOG_ERR, "CudaDeviceSync failed with Error code: %d in cublasSdot", (int)status); return status;}
     if(stat != CUBLAS_STATUS_SUCCESS ){ syslog(LOG_ERR, "CUBLAS dot product failed with Error code: %d", (int)stat); return stat;}
