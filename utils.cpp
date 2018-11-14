@@ -40,6 +40,7 @@ void NNbyCPU(struct layer* layers, int num_layers, float* input_image, float* y,
 		int n = batch_size;
 		MultiplyCPU(layers[i].fc_layer.weights,input,output[i], bias[i], m, k, n);
 		sigmoidCPU(output[i], m*n);
+		softmaxCPU(output[i], m*n);
 	}
 	//fclose(fp);
 	computeCostCPU(y, output[num_layers-1], layers[num_layers-1].fc_layer.size*batch_size, cost);
@@ -52,26 +53,14 @@ void NNbyCPU(struct layer* layers, int num_layers, float* input_image, float* y,
 	mkl_free(output);
 	mkl_free(bias);
 }
+void softmaxCPU(float* A, int size) {
+	for (int i = 0; i < size; i++) {
+		A[i] = (float)exp(-A[i]);
+	}
+}
 
 
 void MultiplyCPU(float* A, float* B, float* C, float* X,  int m, int k, int n) {
-	/*for(int i=0;i< m; i++) {
-		for (int j=0; j < n; j++) {
-			float sum = 0;
-			for (int l=0; l< k; l++) {
-				// sum += A[i][l]*B[l][j];
-				// Column Major Formula
-				sum += A[m*l+i]*B[k*j+l];
-				//Row Major Formula
-				//sum += A[m*i+l]*B[l*n+j];
-			}
-			//Column Major Formula
-			C[j*m+i]=sum;
-			//Row Major Formula
-			//printf("i: %d j: %d m: %d n: %d k: %d value: %2.3f", i, j, m, k, n, sum);
-			//C[i*n+j] = sum;
-		}
-	}*/
 	cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans, m, n, k, 1.0, A, m, B, k, 0, C, m);
 	cblas_saxpy(m*n, 1.0, X, 1, C, 1);
 }
@@ -107,7 +96,11 @@ void  get_matrix(float** mat, int size_x, int size_y, int type ) {
 		if (type == 2) {
 			for (int i = 0; i < size_x; i++) {
 				index = rand() % size_y;
-				matrix[i*size_y + index] = 1;
+				for (int j = 0; j < size_y; j++)
+					if (j == index)
+						matrix[i*size_y + j] = 1;
+					else
+						matrix[i*size_y + j] = 0;
 			}
 		}
         *mat = matrix;
@@ -145,51 +138,22 @@ void  print_to_file(FILE* fp, float* x, int size, const char* varName, int layer
 	free(h_y);
 }
 
- int create_output_arrays_in_gpu(float** h_y, float** d_y, float** h_one_vec, float** d_one_vec, int size_x, int size_y) {
-	 	cudaError_t status;
-		get_matrix(h_y, size_x, size_y,2);
-		//print_matrix(*h_y, size_x, size_y);
-		status = cudaMalloc(d_y, size_x*size_y*sizeof(float));
-		if (status != cudaSuccess) { syslog(LOG_ERR, "Allocation of d_y failed with error code %d", status); return status;}
-
-		status = cudaMemcpy(*d_y, *h_y, size_x*size_y*sizeof(float), cudaMemcpyHostToDevice);
-		if (status != cudaSuccess) { syslog(LOG_ERR, "Memcpy of h_y to d_y failed with error code %d", status); return status;}
-		float* h_one = (float*) calloc(size_x*size_y, sizeof(float));
-		for (int i=0; i< size_x*size_y; i++)
-			h_one[i]= 1;
-		*h_one_vec = h_one;
-		status = cudaMalloc(d_one_vec,size_x*size_y*sizeof(float));
-		if (status != cudaSuccess) { syslog(LOG_ERR, "Allocation of d_one_vec failed with error code %d", status); return status;}
-		status = cudaMemcpy(*d_one_vec, *h_one_vec, size_x*size_y*sizeof(float), cudaMemcpyHostToDevice);
-		if (status != cudaSuccess) { syslog(LOG_ERR, "Memcpy of h_onevec to d_onevec failed with error code %d", status); return status;}
-		return 0;
- }
-
-int  delete_output_arrays_from_gpu(float* h_y, float* d_y,float* h_one_vec, float* d_one_vec) {
-	cudaError_t status;
-	mkl_free(h_y);
-	free(h_one_vec);
-	status = cudaFree(d_y);
-	if(status != cudaSuccess) return (int) status;
-	status = cudaFree(d_one_vec);
-	if(status != cudaSuccess) return (int)status;
-}
-
-int destroy_layers(struct layer* layers, float* input_image, int num_layers) {
+int destroy_layers(struct layer* layers, float* input_image, int num_layers, float* h_y) {
 	for (int i = 0; i < num_layers; i++) {
 		if (layers[i].type == FULLYCONNECTED) {
 			mkl_free(layers[i].fc_layer.weights);
+			mkl_free(layers[i].fc_layer.bias);
 		}
 		else if (layers[i].type == CONVOLUTION) {
 			mkl_free(layers[i].conv_layer.filter);
 		}
 	}
 	mkl_free(input_image);
+	mkl_free(h_y);
 	free(layers);
 }
 
 double gigaFlop(struct layer* layers, int num_layers, int batch_size) {
-
 	double gFlops = 0;
 	int input_size = IMAGE_WIDTH*IMAGE_HEIGHT*batch_size;
 

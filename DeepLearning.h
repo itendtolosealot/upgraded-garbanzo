@@ -69,6 +69,16 @@ struct layer {
 		struct convLayer conv_layer;
 	};
 };
+/* cost descriptor variables would be used in cost computation */
+struct cost_descriptor {
+	float* d_out;	// d_out represents the output of the NN 
+	float* d_dout;	// d_dout represents the gradient
+	float* d_yhat;	// d_yhat represents the exponentiated output, i.e., FOR EACH EXAMPLE, d_yhat[i] = exp(d_out[i])/(\sum_{j=0}^{output_size} exp(d_out[j]))
+	float* d_y;		// d_y represents the labelled output. It indicates the true output for the example.
+	float* d_one_vec;
+	float* h_one_vec; // Vector on the host that would be copied to the device
+	float* h_y;		// Vector on the host that would be copied to the device
+};
 
 struct descriptor {
 	bool valid;
@@ -76,27 +86,25 @@ struct descriptor {
 	cudnnTensorDescriptor_t din_desc;
 	cudnnTensorDescriptor_t y_desc;
 	cudnnTensorDescriptor_t dy_desc;
-	cudnnTensorDescriptor_t output_desc;
 	cudnnTensorDescriptor_t dout_desc;
 	cudnnFilterDescriptor_t filter_desc;
 	cudnnFilterDescriptor_t dfilter_desc;
 	cudnnConvolutionDescriptor_t conv_desc;
 	cudnnConvolutionFwdAlgo_t algo_desc;
 	cudnnActivationDescriptor_t acti_desc;
+	cudnnTensorDescriptor_t output_desc;
 	unsigned long workspace_size;
 	// Naming convention: The first 'd' stands for "device" indiacting that the array lives in the device. The second d, whenever used 
-	// stands for delta or derivative. 
+	// stands for delta or gradient of the cost with respect to that variable. 
 	float* d_input;
 	float* d_filter;
 	float* d_y;
-	float* d_output;
 	float* d_weights;
 	float* d_bias;
 	float* d_workspace;
 	float* d_din;
 	float* d_df;
 	float* d_dy;
-	float* d_dout;
 	float* d_dw;
 	float* d_db;
 };
