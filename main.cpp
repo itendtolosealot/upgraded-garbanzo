@@ -30,11 +30,10 @@ int main(int argc, char **argv) {
 	cudnnHandle_t cudnn;
 	cublasHandle_t cublas;
 	int status;
-	struct cost_descriptor cost;
 	struct Status ff_stat;
 	int batch_size;
 	float* input_image;
-	struct cost_descriptor cost;
+	struct cost_descriptor cost_desc;
 	float cost;
 	float* test;
 	int n, c, h, w;
@@ -112,7 +111,7 @@ int main(int argc, char **argv) {
 	}
 	syslog(LOG_DEBUG, "Created Descriptors");
 	status = configure_descriptors(&cudnn, desc, num_layers, layers, batch_size);
-	if(status != 0) {`
+	if(status != 0) {
 			syslog(LOG_ERR, "Error while Descriptor config. Terminating the program");
 			exit(1);
 	}
@@ -140,17 +139,17 @@ int main(int argc, char **argv) {
 */
 	syslog(LOG_DEBUG, "Created yHat");
 
-	allocate_memory(desc, cost, layers, num_layers, batch_size) ;
+	allocate_memory(desc, cost_desc, layers, num_layers, batch_size) ;
 	if(status != 0) {
-		destroy_descriptors(desc, cost, num_layers);
+		destroy_descriptors(desc, cost_desc, num_layers);
 		syslog(LOG_ERR, "Error while allocating Memory. Terminating the program");
 		exit(1);
 	}
 	syslog(LOG_DEBUG, "Allocated Device Memory for Input/Output/Weights");
 
-	copy_input_to_device(desc, layers, num_layers, input_image, batch_size);
+	copy_input_to_device(desc, cost_desc, layers, num_layers, input_image, batch_size);
 	if(status != 0) {
-		destroy_descriptors(desc, cost, num_layers);
+		destroy_descriptors(desc, cost_desc, num_layers);
 		syslog(LOG_ERR, "Error while Copying data to Device. Terminating the program");
 		exit(1);
 	}
@@ -160,23 +159,23 @@ int main(int argc, char **argv) {
 	struct timeval start_timeval, end_timeval;
 	for(int i=0; i < num_turns; i++) {
 	gettimeofday(&start_timeval, NULL);
-	ff_stat = feedforward(&cudnn, &cublas ,  desc, layers, num_layers, batch_size);
+	ff_stat = feedforward(&cudnn, &cublas ,  desc, cost_desc, layers, num_layers, batch_size);
 	gettimeofday(&end_timeval, NULL);
 	diff_1 += (end_timeval.tv_sec - start_timeval.tv_sec)*1000.0 + (end_timeval.tv_usec - start_timeval.tv_usec)*1.0/1000.0;
 
 
 	if(ff_stat.failure != NONE) {
 		syslog(LOG_ERR, "Error in Feed-forward. Error in %d . Received CUDNN Error %d CUBLAS ERROR %d", ff_stat.layer, ff_stat.cudnn_stat, ff_stat.cublas_stat);
-		destroy_descriptors(desc, cost, num_layers);
+		destroy_descriptors(desc, cost_desc, num_layers);
 		exit(1);
 	}
 	syslog(LOG_DEBUG, "Completed Feedforward");
 	gettimeofday(&start_timeval, NULL);
-	status = computecost(d_y, desc[num_layers-1].d_output, d_one_vector, layers[num_layers - 1].fc_layer.size, batch_size, cublas, &cost);
+	status = computecost(cost_desc, layers[num_layers - 1].fc_layer.size, batch_size, cublas, &cost);
 	gettimeofday(&end_timeval, NULL);
 	diff_2 +=  (end_timeval.tv_sec - start_timeval.tv_sec)*1000.0 + (end_timeval.tv_usec - start_timeval.tv_usec)*1.0/1000.0;
 	if(status != 0) {
-		destroy_descriptors(desc, cost, num_layers);
+		destroy_descriptors(desc, cost_desc, num_layers);
 		syslog(LOG_ERR, "Error in Compute cost. Terminating the program");
 		exit(1);
 	}
@@ -192,7 +191,7 @@ int main(int argc, char **argv) {
 	float cost_cpu = 0;
 	gettimeofday(&start_timeval, NULL);
 	for(int i=0; i< num_turns; i++) {
-	NNbyCPU(layers, num_layers, input_image, h_y, batch_size, &cost_cpu);
+	NNbyCPU(layers, num_layers, input_image, cost_desc.h_y, batch_size, &cost_cpu);
 	}
 	gettimeofday(&end_timeval, NULL);
 	diff_2 =  (end_timeval.tv_sec - start_timeval.tv_sec)*1000.0 + (end_timeval.tv_usec - start_timeval.tv_usec)*1.0/1000.0;
@@ -200,7 +199,7 @@ int main(int argc, char **argv) {
 	printf("Time taken to execute on CPU: %2.3f ms \n", diff_2*1.0/(1.0*num_turns));
 	printf("CPU Giga Flops: %2.3f\n", (double)flop_per_cycle*num_turns*1000.0/diff_2);
 	printf("Error between CPU and GPU: %2.5f %% \n", (cost-cost_cpu)*100.0/cost);
-	status = destroy_descriptors (desc, num_layers);
+	status = destroy_descriptors (desc, cost_desc, num_layers);
 	if(status != 0) {
 		syslog(LOG_ERR, "Descriptors could not be cleaned up. Terminating....");
 		exit(1);

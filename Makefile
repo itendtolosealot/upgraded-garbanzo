@@ -9,10 +9,10 @@ utils.o: utils.cpp
 	g++ -g -I/usr/local/cuda/include -I/opt/intel/compilers_and_libraries/linux/mkl/include -c $(CPPFLAGS) utils.cpp -o utils.o
 
 DeepLearning.o: DeepLearning.cu
-	nvcc -Xcompiler $(CPPFLAGS) -ccbin g++ -I/usr/local/cuda/include  -m64 $(GENCODE) -o DeepLearning.o -c DeepLearning.cu
+	nvcc -Xcompiler $(CPPFLAGS) -ccbin g++ -I/usr/local/cuda/include -I/opt/intel/compilers_and_libraries/linux/mkl/include -m64 $(GENCODE) -o DeepLearning.o -c DeepLearning.cu
 
 main.o: main.cpp
-	g++ -g -I/usr/local/cuda/include  -c $(CPPFLAGS) main.cpp -o main.o
+	g++ -g -I/usr/local/cuda/include -I/opt/intel/compilers_and_libraries/linux/mkl/include  -c $(CPPFLAGS) main.cpp -o main.o
 
 clean:
 	rm -rf deep-learning $(OBJS)

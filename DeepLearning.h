@@ -13,7 +13,7 @@
 #include <cublas.h>
 #include <cublas_api.h>
 #include <unistd.h>
-
+#include "mkl.h"
 #include <cublas_v2.h>
 #include <time.h>
 #include <sys/time.h>
@@ -76,6 +76,7 @@ struct cost_descriptor {
 	float* d_yhat;	// d_yhat represents the exponentiated output, i.e., FOR EACH EXAMPLE, d_yhat[i] = exp(d_out[i])/(\sum_{j=0}^{output_size} exp(d_out[j]))
 	float* d_y;		// d_y represents the labelled output. It indicates the true output for the example.
 	float* d_one_vec;
+	float* d_sum_exp;
 	float* h_one_vec; // Vector on the host that would be copied to the device
 	float* h_y;		// Vector on the host that would be copied to the device
 };
@@ -109,12 +110,12 @@ struct descriptor {
 	float* d_db;
 };
 int setup_descriptors ( struct descriptor** desc, int num_layers, struct layer *layers);
-int destroy_descriptors (struct descriptor* desc, int num_layers);
+int destroy_descriptors (struct descriptor* desc, struct cost_descriptor cost, int num_layers);
 int configure_descriptors(cudnnHandle_t* handle, struct descriptor* desc, int num_layers, struct layer *layers, int batch_size);
-int allocate_memory(struct descriptor* desc, struct layer* layers, int num_layers, int batch_size) ;
-int copy_input_to_device(struct descriptor* desc, struct layer* layers, int num_layers, float* input_image, int batch_size);
-struct Status feedforward(cudnnHandle_t* cudnn, 	cublasHandle_t* handle, struct descriptor* desc, struct layer *layers, int num_layers, int batch_size);
-int computecost(float* y, float* yhat, float* ones_vector, int size, cublasHandle_t handle, float* cost);
+int allocate_memory(struct descriptor* desc, struct cost_descriptor cost, struct layer* layers, int num_layers, int batch_size) ;
+int copy_input_to_device(struct descriptor* desc, struct cost_descriptor cost, struct layer* layers, int num_layers, float* input_image, int batch_size);
+struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct descriptor* desc, struct cost_descriptor cost, struct layer *layers, int num_layers, int batch_size);
+int computecost(struct cost_descriptor cost, int batch_size, int output_size, cublasHandle_t handle, float* total_cost);
 
 
 

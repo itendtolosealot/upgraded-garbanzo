@@ -138,7 +138,7 @@ void  print_to_file(FILE* fp, float* x, int size, const char* varName, int layer
 	free(h_y);
 }
 
-int destroy_layers(struct layer* layers, float* input_image, int num_layers, float* h_y) {
+int destroy_layers(struct layer* layers, float* input_image, int num_layers) {
 	for (int i = 0; i < num_layers; i++) {
 		if (layers[i].type == FULLYCONNECTED) {
 			mkl_free(layers[i].fc_layer.weights);
@@ -149,7 +149,6 @@ int destroy_layers(struct layer* layers, float* input_image, int num_layers, flo
 		}
 	}
 	mkl_free(input_image);
-	mkl_free(h_y);
 	free(layers);
 }
 

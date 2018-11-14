@@ -162,28 +162,32 @@ int configure_descriptors(cudnnHandle_t* handle, struct descriptor* desc, int nu
 	return 0;
 }
 
-cudaError_t allocate_memory_cost_desc(struct cost_descriptor cost, int size) {
+cudaError_t allocate_memory_cost_desc(struct cost_descriptor cost, int size_x, int size_y) {
 	cudaError_t stat;
-	stat = cudaMalloc(&cost.d_out, size*sizeof(float));
+	stat = cudaMalloc(&cost.d_out, size_x*size_y*sizeof(float));
 	if (stat != cudaSuccess) return stat;
-	stat = cudaMalloc(&cost.d_dout, size * sizeof(float));
+	stat = cudaMalloc(&cost.d_dout, size_x*size_y * sizeof(float));
 	if (stat != cudaSuccess) return stat;
-	stat = cudaMalloc(&cost.d_yhat, size * sizeof(float));
+	stat = cudaMalloc(&cost.d_yhat, size_x*size_y * sizeof(float));
 	if (stat != cudaSuccess) return stat;
-	stat = cudaMalloc(&cost.d_y, size * sizeof(float));
+	stat = cudaMalloc(&cost.d_y, size_x*size_y * sizeof(float));
 	if (stat != cudaSuccess) return stat;
-	stat = cudaMalloc(&cost.d_one_vec, size * sizeof(float));
+	stat = cudaMalloc(&cost.d_one_vec, size_x*size_y * sizeof(float));
+	if (stat != cudaSuccess) return stat;
+	// The sum_exponent will carry the sum of the exponents associated with a particular output (independent of the output size).
+	//Hence it would have one value per example. The size_x corresponds to batch_size.
+	stat = cudaMalloc(&cost.d_sum_exp, size_x*sizeof(float));
 	if (stat != cudaSuccess) return stat;
 	
-	cost.h_y = (float*) mkl_malloc(size * sizeof(float), 64);
+	cost.h_y = (float*) mkl_malloc(size_x*size_y * sizeof(float), 64);
 	if (cost.h_y == NULL) {
 		syslog(LOG_ERR, "Unable to allocate memory to h_y");
-		return 1;
+		return (cudaError_t) 2;
 	}
-	cost.h_one_vec = (float*)mkl_malloc(size * sizeof(float), 64);
+	cost.h_one_vec = (float*)mkl_malloc(size_x*size_y* sizeof(float), 64);
 	if (cost.h_one_vec == NULL) {
 		syslog(LOG_ERR, "Unable to allocate memory to h_y");
-		return 1;
+		return (cudaError_t) 2;
 	}
 	return cudaSuccess;
 }
@@ -218,7 +222,7 @@ int allocate_memory(struct descriptor* desc, struct cost_descriptor cost, struct
 			if(i==num_layers-1) {
 				status = cudnnGetTensor4dDescriptor((desc[i].output_desc), &t, &n, &c, &h, &w, NULL, NULL, NULL, NULL);
 				if(status != CUDNN_STATUS_SUCCESS) return (int)status;
-				stat = allocate_memory_cost_desc(cost, n*c*h*w);
+				stat = allocate_memory_cost_desc(cost, n*c, h*w);
 				if (stat != cudaSuccess) {
 					syslog(LOG_ERR, "Cost struct memory allocation failed with Error %d", stat);
 					return stat;
@@ -239,7 +243,7 @@ int allocate_memory(struct descriptor* desc, struct cost_descriptor cost, struct
 				stat = cudaMalloc(&desc[i].d_bias, batch_size*layers[i].fc_layer.size*sizeof(float));
 				if(stat != cudaSuccess) return stat;
 				if(i==num_layers-1) {
-					stat = allocate_memory_cost_desc(cost, batch_size*layers[i].fc_layer.size);
+					stat = allocate_memory_cost_desc(cost, batch_size, layers[i].fc_layer.size);
 					if (stat != cudaSuccess) {
 						syslog(LOG_ERR, "Cost struct memory allocation failed with Error %d", stat);
 						return stat;
@@ -267,7 +271,7 @@ int copy_input_to_device(struct descriptor* desc, struct cost_descriptor cost, s
 		return stat;
 	}
 
-	int size_x
+	int size_x;
 	int size_y;
 	if (desc[num_layers - 1].valid) {
 		status = cudnnGetTensor4dDescriptor((desc[num_layers - 1].output_desc), &t, &n, &c, &h, &w, NULL, NULL, NULL, NULL);
@@ -279,7 +283,7 @@ int copy_input_to_device(struct descriptor* desc, struct cost_descriptor cost, s
 		size_y = h * w;
 	}
 	else {
-		size_y = layers[num_layers - 1].output_size;
+		size_y = layers[num_layers - 1].fc_layer.size;
 		size_x = batch_size;
 	}
 
@@ -324,7 +328,7 @@ int copy_input_to_device(struct descriptor* desc, struct cost_descriptor cost, s
 }
 
 
-struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct descriptor* desc, struct layer *layers, int num_layers, int batch_size)
+struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct descriptor* desc, struct cost_descriptor cost, struct layer *layers, int num_layers, int batch_size)
 {
 	struct Status ff_stat;
 	cudnnStatus_t status;
@@ -335,7 +339,7 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 //  struct timeval start_timeval, end_timeval;
 
 	for(int i=0;i < num_layers;i++) {
-        output_array = (i < num_layers-1) ? desc[i+1].d_input:desc[i].d_output;
+        output_array = (i < num_layers-1) ? desc[i+1].d_input:cost.d_out;
 		if(desc[i].valid) {
 				status = cudnnConvolutionForward(*cudnn,&alpha, (desc[i].input_desc), desc[i].d_input,
 											(desc[i].filter_desc),desc[i].d_filter, (desc[i].conv_desc),
@@ -441,7 +445,7 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 	return ff_stat;
 }
 
-
+/*
 struct Status feedback(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct descriptor* desc, struct cost_descriptor cost, struct layer *layers, int num_layers, int batch_size) {
 	struct Status ff_stat;
 	cudnnStatus_t status;
@@ -477,36 +481,35 @@ struct Status feedback(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct desc
 
 }
 
+*/
 
-
-int computecost(float* y, float* yhat, float* ones_vector, int batch_size, int output_size, cublasHandle_t handle, float* cost) {
+int computecost(struct cost_descriptor cost, int batch_size, int output_size, cublasHandle_t handle, float* total_cost) {
 	cudaError_t status;
 	cublasStatus_t stat;
-	float* sum_exponents = cudaMalloc(sizeof(float)*batch_size);
 	float alpha = 1;
 	float beta = 0;
 	int blockSize,gridSize;
 	blockSize = 1024;
 	gridSize = (int) ceil ((float ) batch_size*output_size/(blockSize));
 	/* Softmax on every output. The result is stored in yhat itself. */
-	softmax << <gridSize, blockSize >> > (batch_size*output_size, yhat);
+	softmax << <gridSize, blockSize >> > (batch_size*output_size, cost.d_out);
 	status = cudaDeviceSynchronize();
 	if (status != cudaSuccess) { syslog(LOG_ERR, "CudaDeviceSync failed with Error code: %d during Kernel run of softmax", (int)status); return status; }
 	
 	/* Matrix mul to find \sum_{i=0}^{output_size} yhat[i]. This will give the sum of exponents for a given exaomple*/
-	stat = cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, 1, batch_size, output_size, &alpha, ones_vector, 1, yhat, output_size, &beta, sum_exponents, 1);
+	stat = cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, 1, batch_size, output_size, &alpha, cost.d_one_vec, 1, cost.d_out, output_size, &beta, cost.d_yhat, 1);
 	if (stat != CUBLAS_STATUS_SUCCESS) { syslog(LOG_ERR, "CUBLAS matrix mult to compute sum_exponents failed with Error code: %d ", (int)stat); return stat;}
 
 	/* Calculating cross entropy knowing the sum of exponents*/
-	cross_entropy<<<gridSize, blockSize>>>(batch_size, output_size, y, yhat, sum_exponents);
+	cross_entropy<<<gridSize, blockSize>>>(batch_size, output_size, cost.d_y, cost.d_yhat, cost.d_sum_exp);
     status = cudaDeviceSynchronize();
     if (status != cudaSuccess) { syslog(LOG_ERR, "CudaDeviceSync failed with Error code: %d during Kernel run of cross_entropy", (int)status); return status;}
 
 	/* Dot product to compute the sum of all the log properties*/
-    stat = cublasSdot_v2(handle, batch_size*output_size, ones_vector,1, yhat, 1, cost);
+    stat = cublasSdot_v2(handle, batch_size*output_size, cost.d_one_vec,1, cost.d_yhat, 1, total_cost);
     status = cudaDeviceSynchronize();
     if (status != cudaSuccess) { syslog(LOG_ERR, "CudaDeviceSync failed with Error code: %d in cublasSdot", (int)status); return status;}
     if(stat != CUBLAS_STATUS_SUCCESS ){ syslog(LOG_ERR, "CUBLAS dot product failed with Error code: %d", (int)stat); return stat;}
-	*cost /= (batch_size);
+	*total_cost /= (batch_size);
 	return 0;
 }
