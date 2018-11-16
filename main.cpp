@@ -40,7 +40,7 @@ int main(int argc, char **argv) {
 	int num_turns;
 	cudnnDataType_t t;
 
-	setlogmask (LOG_UPTO (LOG_ERR));
+	setlogmask (LOG_UPTO (LOG_DEBUG));
 	openlog ("deep-learning", LOG_CONS | LOG_PID | LOG_NDELAY, LOG_USER);
 	if ((fp=fopen(FP, "r"))==NULL) {
 		syslog (LOG_ERR, "Unable to find the layer information file. Terminating the program");
@@ -139,7 +139,7 @@ int main(int argc, char **argv) {
 */
 	syslog(LOG_DEBUG, "Created yHat");
 
-	allocate_memory(desc, cost_desc, layers, num_layers, batch_size) ;
+	allocate_memory(desc, &cost_desc, layers, num_layers, batch_size) ;
 	if(status != 0) {
 		destroy_descriptors(desc, cost_desc, num_layers);
 		syslog(LOG_ERR, "Error while allocating Memory. Terminating the program");
@@ -147,7 +147,7 @@ int main(int argc, char **argv) {
 	}
 	syslog(LOG_DEBUG, "Allocated Device Memory for Input/Output/Weights");
 
-	copy_input_to_device(desc, cost_desc, layers, num_layers, input_image, batch_size);
+	copy_input_to_device(desc, &cost_desc, layers, num_layers, input_image, batch_size);
 	if(status != 0) {
 		destroy_descriptors(desc, cost_desc, num_layers);
 		syslog(LOG_ERR, "Error while Copying data to Device. Terminating the program");
@@ -159,19 +159,19 @@ int main(int argc, char **argv) {
 	struct timeval start_timeval, end_timeval;
 	for(int i=0; i < num_turns; i++) {
 	gettimeofday(&start_timeval, NULL);
-	ff_stat = feedforward(&cudnn, &cublas ,  desc, cost_desc, layers, num_layers, batch_size);
+	ff_stat = feedforward(&cudnn, &cublas ,  desc, &cost_desc, layers, num_layers, batch_size);
 	gettimeofday(&end_timeval, NULL);
 	diff_1 += (end_timeval.tv_sec - start_timeval.tv_sec)*1000.0 + (end_timeval.tv_usec - start_timeval.tv_usec)*1.0/1000.0;
 
 
 	if(ff_stat.failure != NONE) {
-		syslog(LOG_ERR, "Error in Feed-forward. Error in %d . Received CUDNN Error %d CUBLAS ERROR %d", ff_stat.layer, ff_stat.cudnn_stat, ff_stat.cublas_stat);
+		syslog(LOG_ERR, "Error in Feed-forward. Error in %d, failure type %d . Received CUDNN Error %d CUBLAS ERROR %d CUDA Error %d", ff_stat.layer, ff_stat.failure, ff_stat.cudnn_stat, ff_stat.cublas_stat, ff_stat.cuda_stat);
 		destroy_descriptors(desc, cost_desc, num_layers);
 		exit(1);
 	}
 	syslog(LOG_DEBUG, "Completed Feedforward");
 	gettimeofday(&start_timeval, NULL);
-	status = computecost(cost_desc, layers[num_layers - 1].fc_layer.size, batch_size, cublas, &cost);
+	status = computecost(&cost_desc, layers[num_layers - 1].fc_layer.size, batch_size, cublas, &cost);
 	gettimeofday(&end_timeval, NULL);
 	diff_2 +=  (end_timeval.tv_sec - start_timeval.tv_sec)*1000.0 + (end_timeval.tv_usec - start_timeval.tv_usec)*1.0/1000.0;
 	if(status != 0) {

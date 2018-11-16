@@ -26,9 +26,9 @@ void NNbyCPU(struct layer* layers, int num_layers, float* input_image, float* y,
 	float** output = (float**) mkl_calloc(num_layers, sizeof(float*), 64);
 	float** bias = (float**) mkl_calloc(num_layers, sizeof(float*), 64);
 	float* input;
-	float* sum_exponents = (float*)mkl_calloc(batch_size, sizeof(float));
-	float* exp_output = (float*)mkl_calloc(batch_size*layers[num_layers - 1].fc_layer.size, sizeof(float));
-
+	float* sum_exponents = (float*)mkl_calloc(batch_size, sizeof(float), 64);
+	float* exp_output = (float*)mkl_calloc(batch_size*layers[num_layers - 1].fc_layer.size, sizeof(float), 64);
+	int m,n,k;
 	for(int i=0; i< num_layers;i++) {
 		output[i] = (float*) mkl_malloc(layers[i].fc_layer.size*batch_size*sizeof(float), 64);
 		bias[i] = replicate_bias_for_batch(layers[i].fc_layer.size, batch_size, layers[i].fc_layer.bias);
@@ -38,9 +38,9 @@ void NNbyCPU(struct layer* layers, int num_layers, float* input_image, float* y,
 		if (layers[i].type = FULLYCONNECTED) {
 			input = (i == 0) ? input_image : output[i - 1];
 			assert(input != NULL);
-			int m = layers[i].fc_layer.size;
-			int k = (layers[i].fc_layer.input_size) / batch_size;
-			int n = batch_size;
+			m = layers[i].fc_layer.size;
+			k = (layers[i].fc_layer.input_size) / batch_size;
+			n = batch_size;
 			MultiplyCPU(layers[i].fc_layer.weights, input, output[i], bias[i], m, k, n);
 			sigmoidCPU(output[i], m*n);
 		}
@@ -61,11 +61,11 @@ void NNbyCPU(struct layer* layers, int num_layers, float* input_image, float* y,
 	if (bias != NULL) mkl_free(bias);
 }
 void softmaxCPU(float* out, float* exp_out, float* sum_exp, int m, int n, int k) {
-	float* one_vector = (float*)mkl_malloc(sizeof(float)*k);
+	float* one_vector = (float*)mkl_malloc(sizeof(float)*k, 64);
 	for (int i = 0; i < k; i++) {
 		one_vector[i] = 1;
 	}
-	for (int i = 0; i < size; i++) {
+	for (int i = 0; i < m*k; i++) {
 		exp_out[i] = (float)exp(out[i]);
 	}
 	cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans, m, n, k, 1.0, exp_out, m, one_vector, k, 0, sum_exp, m);
