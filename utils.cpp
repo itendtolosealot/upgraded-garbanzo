@@ -13,12 +13,12 @@
 #include "utils.h"
 #include "mkl.h"
 
-float* replicate_bias_for_batch(int size, int batch_size, float* bias) {
-	float* replicated_bias = (float *) mkl_malloc(sizeof(float)*size*batch_size, 64);
+void replicate_bias_for_batch(int size, int batch_size, float* bias_src, float** bias_dest) {
+	float* replicate = (float *) mkl_malloc(sizeof(float)*size*batch_size, 64);
 	for(int i=0; i < batch_size;i++) {
-		memcpy(replicated_bias + i*size, bias, size*sizeof(float));
+		memcpy(replicate + i*size, bias_src, size*sizeof(float));
 	}
-	return replicated_bias;
+	*bias_dest = replicate;
 }
 
 void NNbyCPU(struct layer* layers, int num_layers, float* input_image, float* y, int batch_size, float* cost) {
@@ -31,7 +31,7 @@ void NNbyCPU(struct layer* layers, int num_layers, float* input_image, float* y,
 	int m,n,k;
 	for(int i=0; i< num_layers;i++) {
 		output[i] = (float*) mkl_malloc(layers[i].fc_layer.size*batch_size*sizeof(float), 64);
-		bias[i] = replicate_bias_for_batch(layers[i].fc_layer.size, batch_size, layers[i].fc_layer.bias);
+		replicate_bias_for_batch(layers[i].fc_layer.size, batch_size, layers[i].fc_layer.bias, &bias[i]);
 	}
 
 	for (int i = 0; i < num_layers; i++) {
@@ -75,7 +75,7 @@ void softmaxCPU(float* out, float* exp_out, float* sum_exp, int m, int n, int k)
 
 void MultiplyCPU(float* A, float* B, float* C, float* X,  int m, int k, int n) {
 	cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans, m, n, k, 1.0, A, m, B, k, 0, C, m);
-	cblas_saxpy(m*n, 1.0, X, 1, C, 1);
+	//cblas_saxpy(m*n, 1.0, X, 1, C, 1);
 }
 
 void sigmoidCPU(float* A, int size) {

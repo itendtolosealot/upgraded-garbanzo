@@ -250,6 +250,9 @@ int allocate_memory(struct descriptor* desc, struct cost_descriptor* cost, struc
 						return stat;
 					}
 				}
+				stat = cudaMalloc(&desc[i].d_y, (layers[i].fc_layer.size)*batch_size*sizeof(float));
+				if(stat != cudaSuccess) return stat;
+
 		}
 
 
@@ -370,7 +373,7 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 									desc[i].d_input,
 									(int)((layers[i].fc_layer.input_size)/batch_size ),
 									&beta,
-									desc[i].d_y,
+									desc[i].d_y, /* Shouldn't this be output_array */
 									layers[i].fc_layer.size);
 				if (stat != CUBLAS_STATUS_SUCCESS) {
 									ff_stat.failure = CUBLAS;
@@ -378,7 +381,10 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 									ff_stat.layer = i;
 									ff_stat.cudnn_stat = CUDNN_STATUS_SUCCESS;
 									ff_stat.cuda_stat = cudaSuccess;
+									syslog(LOG_ERR, "Error in cublasSgemm routine in layer %d",i);
 									return ff_stat;
+				} else {
+					syslog(LOG_DEBUG, "cublasSgemm routine successful");
 				}
 
 				cuda_stat = cudaDeviceSynchronize();
@@ -388,7 +394,10 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 					ff_stat.cublas_stat=CUBLAS_STATUS_SUCCESS;
 					ff_stat.cudnn_stat = CUDNN_STATUS_SUCCESS;
 					ff_stat.cuda_stat = cuda_stat;
+					syslog(LOG_ERR, "Error in cudaDeviceSynchronize routine after cublasSgemm in layer %d", i);
 					return ff_stat;
+				} else {
+					syslog(LOG_DEBUG, "cudaDeviceSychronize() after cublasSgemm successful");
 				}
 
 				stat = cublasSaxpy(*handle, layers[i].fc_layer.size*batch_size, &alpha, desc[i].d_bias, 1, desc[i].d_y, 1);
@@ -398,7 +407,10 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 					ff_stat.cublas_stat=stat;
 					ff_stat.cudnn_stat = CUDNN_STATUS_SUCCESS;
 					ff_stat.cuda_stat = cudaSuccess;
+					syslog(LOG_ERR, "Error in cublasSaxpy routine");
 					return ff_stat;
+				} else {
+					syslog(LOG_DEBUG, "cublasSaxpy routine successful");
 				}
 
 				cuda_stat = cudaDeviceSynchronize();
@@ -408,7 +420,10 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 					ff_stat.cublas_stat=CUBLAS_STATUS_SUCCESS;
 					ff_stat.cudnn_stat = CUDNN_STATUS_SUCCESS;
 					ff_stat.cuda_stat = cuda_stat;
+					syslog(LOG_ERR, "Error in cudaDeviceSynchronize routine after cublasSaxpy");
 					return ff_stat;
+				} else {
+					syslog(LOG_DEBUG, "cudaDeviceSynchronize routine successful after cublasSgemm");
 				}
 
 				/* gettimeofday(&end_timeval, NULL);
@@ -428,7 +443,10 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 									ff_stat.cublas_stat=CUBLAS_STATUS_SUCCESS;
 									ff_stat.cudnn_stat = CUDNN_STATUS_SUCCESS;
 									ff_stat.cuda_stat = cuda_stat;
+									syslog(LOG_ERR, "Error in cudaDeviceSynchronize routine after Activation");
 									return ff_stat;
+				} else {
+					syslog(LOG_DEBUG, "cudaDeviceSynchronize routine successful after Activation");
 				}
 
 				/*
@@ -443,8 +461,11 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 								ff_stat.cudnn_stat=status;
 								ff_stat.cublas_stat = CUBLAS_STATUS_SUCCESS;
 								ff_stat.cuda_stat = cudaSuccess;
+								syslog(LOG_ERR, "cudnnError in cudnnActivationForward routine");
 								return ff_stat;
 
+				} else {
+					syslog(LOG_DEBUG, "Activation routine successful");
 				}
 			}
 		}
