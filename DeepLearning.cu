@@ -21,24 +21,25 @@
 __global__ void cross_entropy(int batch_size, int output_size, float* y, float* exp_yhat, float* sum_exponents)
 {
   int i = blockIdx.x*blockDim.x + threadIdx.x;
-  int sum_exp_index = i / output_size;
+  int sum_exp_index = (int) (i / output_size);
   float res = 0;
   if (i < batch_size*output_size) {
 	  if ((exp_yhat[i] == 0) || (exp_yhat[i] == 1))
 			  res = 0;
 		  else
-			  res = log(1 - exp_yhat[i] / (sum_exponents[sum_exp_index]))*y[i] + log(exp_yhat[i] / (sum_exponents[sum_exp_index]))*(1 - y[i]);
-	  }
+			  res = log(1 - (exp_yhat[i] / sum_exponents[sum_exp_index]))*y[i] + log(exp_yhat[i] /sum_exponents[sum_exp_index])*(1 - y[i]);
+
 	  exp_yhat[i] = res;
+  	 }
 }
 
 /* We calculate the exponent of the output for every output*/
-__global__ void softmax(int array_size, float* yhat)
+__global__ void softmax(int array_size, float* out, float* yhat)
 {
 	int i = blockIdx.x*blockDim.x + threadIdx.x;
 	float res = 0;
 	if (i < array_size) {
-		res = exp(yhat[i]);
+		res = exp(out[i]);
 		yhat[i] = res;
 	}
 }
@@ -81,7 +82,7 @@ int setup_descriptors ( struct descriptor** desc, int num_layers, struct layer *
 	return 0;
 }
 
-int destroy_descriptors (struct descriptor* desc, struct cost_descriptor cost, int num_layers) {
+int destroy_descriptors (struct descriptor* desc, struct cost_descriptor* cost, int num_layers) {
 	cudnnStatus_t status;
 	for(int i=0;i< num_layers;i++) {
 		if(desc[i].valid) {
@@ -106,13 +107,14 @@ int destroy_descriptors (struct descriptor* desc, struct cost_descriptor cost, i
 		if(desc[i].d_input != NULL) cudaFree(desc[i].d_input);
 		if(desc[i].d_filter != NULL) cudaFree(desc[i].d_filter);
 		if(desc[i].d_workspace != NULL) cudaFree(desc[i].d_workspace);
-		if (cost.d_dout != NULL) cudaFree(cost.d_dout);
-		if (cost.d_out != NULL) cudaFree(cost.d_out);
-		if (cost.d_one_vec != NULL) cudaFree(cost.d_one_vec);
-		if (cost.d_y != NULL) cudaFree(cost.d_y);
-		if (cost.d_yhat != NULL) cudaFree(cost.d_yhat);
-		if (cost.h_y != NULL) mkl_free(cost.h_y);
 	}
+		if (cost->d_dout != NULL) cudaFree(cost->d_dout);
+		if (cost->d_out != NULL) cudaFree(cost->d_out);
+		if (cost->d_one_vec != NULL) cudaFree(cost->d_one_vec);
+		if (cost->d_y != NULL) cudaFree(cost->d_y);
+		if (cost->d_yhat != NULL) cudaFree(cost->d_yhat);
+		if (cost->h_y != NULL) mkl_free(cost->h_y);
+
 	free(desc);
 	return 0;
 }
@@ -185,6 +187,7 @@ cudaError_t allocate_memory_cost_desc(struct cost_descriptor* cost, int size_x, 
 		syslog(LOG_ERR, "Unable to allocate memory to h_y");
 		return (cudaError_t) 2;
 	}
+
 	cost->h_one_vec = (float*)mkl_malloc(size_x*size_y* sizeof(float), 64);
 	if (cost->h_one_vec == NULL) {
 		syslog(LOG_ERR, "Unable to allocate memory to h_y");
@@ -267,6 +270,7 @@ int copy_input_to_device(struct descriptor* desc, struct cost_descriptor* cost, 
 	cudnnDataType_t t;
 	cudnnTensorFormat_t format;
 	int n,c,h,w;
+	FILE* fp = fopen("one_vec.txt","w");
 
 	stat = cudaMemcpy(desc[0].d_input, input_image, sizeof(float)*batch_size*IMAGE_WIDTH*IMAGE_HEIGHT, cudaMemcpyHostToDevice);
 	
@@ -297,6 +301,7 @@ int copy_input_to_device(struct descriptor* desc, struct cost_descriptor* cost, 
 	}
 
 	stat = cudaMemcpy(cost->d_one_vec, cost->h_one_vec, size_x*size_y * sizeof(float), cudaMemcpyHostToDevice);
+	fclose(fp);
 	if (stat != cudaSuccess) {
 		syslog(LOG_ERR, "Error while copying one vector to the device.");
 		return stat;
@@ -371,9 +376,9 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 									desc[i].d_weights,
 									layers[i].fc_layer.size,
 									desc[i].d_input,
-									(int)((layers[i].fc_layer.input_size)/batch_size ),
+									((layers[i].fc_layer.input_size)/batch_size ),
 									&beta,
-									desc[i].d_y, /* Shouldn't this be output_array */
+									desc[i].d_y,
 									layers[i].fc_layer.size);
 				if (stat != CUBLAS_STATUS_SUCCESS) {
 									ff_stat.failure = CUBLAS;
@@ -519,22 +524,25 @@ int computecost(struct cost_descriptor* cost, int batch_size, int output_size, c
 	int blockSize,gridSize;
 	blockSize = 1024;
 	gridSize = (int) ceil ((float ) batch_size*output_size/(blockSize));
+	//FILE* fp = fopen("d_out.txt","w");
 	/* Softmax on every output. The result is stored in yhat itself. */
-	softmax << <gridSize, blockSize >> > (batch_size*output_size, cost->d_out);
+	softmax << <gridSize, blockSize >> > (batch_size*output_size, cost->d_out, cost->d_yhat);
 	status = cudaDeviceSynchronize();
 	if (status != cudaSuccess) { syslog(LOG_ERR, "CudaDeviceSync failed with Error code: %d during Kernel run of softmax", (int)status); return status; }
-	
-	/* Matrix mul to find \sum_{i=0}^{output_size} yhat[i]. This will give the sum of exponents for a given exaomple*/
-	stat = cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, 1, batch_size, output_size, &alpha, cost->d_one_vec, 1, cost->d_out, output_size, &beta, cost->d_yhat, 1);
-	if (stat != CUBLAS_STATUS_SUCCESS) { syslog(LOG_ERR, "CUBLAS matrix mult to compute sum_exponents failed with Error code: %d ", (int)stat); return stat;}
 
+	/* Matrix mul to find \sum_{i=0}^{output_size} yhat[i]. This will give the sum of exponents for a given exaomple*/
+	stat = cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, 1, batch_size, output_size, &alpha, cost->d_one_vec, 1, cost->d_yhat, output_size, &beta, cost->d_sum_exp, 1);
+	//print_to_file(fp, cost->d_sum_exp, batch_size, "d_sum_exp", 2, 0);
+
+	if (stat != CUBLAS_STATUS_SUCCESS) { syslog(LOG_ERR, "CUBLAS matrix mult to compute sum_exponents failed with Error code: %d ", (int)stat); return stat;}
 	/* Calculating cross entropy knowing the sum of exponents*/
 	cross_entropy<<<gridSize, blockSize>>>(batch_size, output_size, cost->d_y, cost->d_yhat, cost->d_sum_exp);
     status = cudaDeviceSynchronize();
     if (status != cudaSuccess) { syslog(LOG_ERR, "CudaDeviceSync failed with Error code: %d during Kernel run of cross_entropy", (int)status); return status;}
+	//fclose(fp);
 
 	/* Dot product to compute the sum of all the log properties*/
-    stat = cublasSdot_v2(handle, batch_size*output_size, cost->d_one_vec,1, cost->d_yhat, 1, total_cost);
+    stat = cublasSdot_v2(handle, batch_size*output_size, cost->d_one_vec, 1 , cost->d_yhat, 1, total_cost);
     status = cudaDeviceSynchronize();
     if (status != cudaSuccess) { syslog(LOG_ERR, "CudaDeviceSync failed with Error code: %d in cublasSdot", (int)status); return status;}
     if(stat != CUBLAS_STATUS_SUCCESS ){ syslog(LOG_ERR, "CUBLAS dot product failed with Error code: %d", (int)stat); return stat;}

@@ -110,7 +110,7 @@ struct descriptor {
 	float* d_db;
 };
 int setup_descriptors ( struct descriptor** desc, int num_layers, struct layer *layers);
-int destroy_descriptors (struct descriptor* desc, struct cost_descriptor cost, int num_layers);
+int destroy_descriptors (struct descriptor* desc, struct cost_descriptor* cost, int num_layers);
 int configure_descriptors(cudnnHandle_t* handle, struct descriptor* desc, int num_layers, struct layer *layers, int batch_size);
 int allocate_memory(struct descriptor* desc, struct cost_descriptor* cost, struct layer* layers, int num_layers, int batch_size) ;
 int copy_input_to_device(struct descriptor* desc, struct cost_descriptor* cost, struct layer* layers, int num_layers, float* input_image, int batch_size);
