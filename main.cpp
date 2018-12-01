@@ -19,6 +19,8 @@
 #include "utils.h"
 #include <syslog.h>
 #include <sys/time.h>
+
+
 constexpr auto FP = "./layers.info";
 
 int main(int argc, char **argv) {
@@ -38,6 +40,8 @@ int main(int argc, char **argv) {
 	float* test;
 	int n, c, h, w;
 	int num_turns;
+	int IMAGE_HEIGHT;
+	int IMAGE_WIDTH;
 	cudnnDataType_t t;
 
 	cost_desc.h_y = NULL;
@@ -53,7 +57,7 @@ int main(int argc, char **argv) {
 
 	syslog(LOG_DEBUG, "h_y in cost is %p", cost_desc.h_y);
 
-	fscanf(fp, "%d %d %d \n", &num_layers, &batch_size, &num_turns);
+	fscanf(fp, "%d %d %d %d %d \n", &num_layers, &batch_size, &num_turns, &IMAGE_HEIGHT, &IMAGE_WIDTH);
 	syslog(LOG_DEBUG, "Number of Layers: %d", num_layers);
 	if (num_layers < 0 || num_layers > 10) {
 		syslog(LOG_ERR, "Number of layers must be between 1 and 10. Obtained %d. Terminating", num_layers);
@@ -73,6 +77,16 @@ int main(int argc, char **argv) {
 		if(layers[i].type == FULLYCONNECTED) {
 			struct fcLayer* fc = &layers[i].fc_layer;
 			fscanf(fp, "%d %d %d\n", &fc->input_size, &fc->size, (int*)&fc->activation);
+			if(i==0 && (fc->input_size != IMAGE_HEIGHT*IMAGE_WIDTH) && layers[i].type==FULLYCONNECTED) {
+				syslog(LOG_ERR, "If the first layer is a FC Network then its size must match the IMAGE_HEIGHT*IMAGE_WIDTH. Found input_size: %d, Found image_size: %d", fc->input_size, IMAGE_HEIGHT*IMAGE_WIDTH);
+				exit(1);
+			}
+			if((i > 0) && (layers[i-1].type == FULLYCONNECTED)  && (fc->input_size != layers[i-1].fc_layer.size))
+			{
+				syslog(LOG_ERR, "In FC Networks, the Output size of the previous layer must be equal to the input size of the next layer.");
+				syslog(LOG_ERR, " Layer %d: Output size: %d Layer: %d Input Size: %d", (i-1), layers[i-1].fc_layer.size, i, fc->input_size);
+				exit(1);
+			}
 			fc->input_size *= batch_size;
 			syslog(LOG_DEBUG, "Layer : %d Input size: %d Neurons: %d Activation %d", i, fc->input_size, fc->size, fc->activation);
 			get_matrix(&fc->weights, fc->input_size/batch_size, fc->size,1);
@@ -103,18 +117,13 @@ int main(int argc, char **argv) {
 	syslog(LOG_DEBUG, "Create cublas handler");
 
 	get_matrix(&input_image, IMAGE_HEIGHT*IMAGE_WIDTH, batch_size, 1);
-	fp = fopen("input_image", "w");
-	for (int i= 0; i< IMAGE_WIDTH*IMAGE_HEIGHT*batch_size; i++) {
-			fprintf(fp, "Var %s Id: %d val: %2.3f \n", "Input", i, input_image[i]);
-	}
-	fclose(fp);
 	status = setup_descriptors (&desc, num_layers, layers);
 	if(status != 0) {
 		syslog(LOG_ERR, "Error while Descriptor Setup. Terminating the program");
 		exit(1);
 	}
 	syslog(LOG_DEBUG, "Created Descriptors");
-	status = configure_descriptors(&cudnn, desc, num_layers, layers, batch_size);
+	status = configure_descriptors(&cudnn, desc, num_layers, layers, batch_size, IMAGE_WIDTH, IMAGE_HEIGHT);
 	if(status != 0) {
 			syslog(LOG_ERR, "Error while Descriptor config. Terminating the program");
 			exit(1);
@@ -143,7 +152,7 @@ int main(int argc, char **argv) {
 */
 	syslog(LOG_DEBUG, "Created yHat");
 
-	allocate_memory(desc, &cost_desc, layers, num_layers, batch_size) ;
+	allocate_memory(desc, &cost_desc, layers, num_layers, batch_size, IMAGE_WIDTH, IMAGE_HEIGHT) ;
 	if(status != 0) {
 		destroy_descriptors(desc, &cost_desc, num_layers);
 		syslog(LOG_ERR, "Error while allocating Memory. Terminating the program");
@@ -153,7 +162,7 @@ int main(int argc, char **argv) {
 	syslog(LOG_DEBUG, "h_y in cost is %p", cost_desc.h_y);
 
 
-	copy_input_to_device(desc, &cost_desc, layers, num_layers, input_image, batch_size);
+	copy_input_to_device(desc, &cost_desc, layers, num_layers, input_image, batch_size, IMAGE_WIDTH, IMAGE_HEIGHT);
 	if(status != 0) {
 		destroy_descriptors(desc, &cost_desc, num_layers);
 		syslog(LOG_ERR, "Error while Copying data to Device. Terminating the program");
@@ -187,7 +196,7 @@ int main(int argc, char **argv) {
 	}
 	syslog(LOG_DEBUG, "Computed the Cost");
 	}
-	double flop_per_cycle = gigaFlop(layers, num_layers, batch_size)*1.0/1e9;
+	double flop_per_cycle = gigaFlop(layers, num_layers, batch_size, IMAGE_WIDTH, IMAGE_HEIGHT)*1.0/1e9;
 	printf("The cost of the Cost Function using GPU is %2.7f \n", cost);
 	printf("Feedforward Time: %2.5f ms\n",diff_1/num_turns);
 	printf("Compute cost Time: %2.5f ms\n",diff_2/num_turns);

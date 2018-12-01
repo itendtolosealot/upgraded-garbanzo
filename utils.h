@@ -32,6 +32,6 @@ void NNbyCPU(struct layer* layers, int num_layers, float* input_image, float* y,
 void sigmoidCPU(float* A, int size);
 void computeCostCPU(float* y, float* yhat, float* sum_exp, int output_size, int size, float* cost);
 int destroy_layers(struct layer* layers, float* input_image, int num_layers);
-double gigaFlop(struct layer* layers, int num_layers, int batch_size);
+double gigaFlop(struct layer* layers, int num_layers, int batch_size,  int IMAGE_WIDTH, int IMAGE_HEIGHT);
 void replicate_bias_for_batch(int size, int batch_size, float* bias_src, float** bias_dest);
 #endif /* UTILS_H_ */

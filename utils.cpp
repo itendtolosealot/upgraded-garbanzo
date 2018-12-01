@@ -75,7 +75,6 @@ void softmaxCPU(float* out, float* exp_out, float* sum_exp, int m, int n) {
 		exp_out[i] = (float)exp(out[i]);
 	}
 	cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans, 1, n, m, 1.0, one_vector, 1, exp_out, m, 0, sum_exp, 1);
-
 	mkl_free(one_vector);
 }
 
@@ -105,6 +104,7 @@ void computeCostCPU(float* y, float* yhat, float* sum_exp, int output_size, int 
 		}
 	}
 	*cost /= (size/output_size);
+	*cost = -(*cost);
 }
 
 void  get_matrix(float** mat, int size_x, int size_y, int type ) {
@@ -183,7 +183,7 @@ int destroy_layers(struct layer* layers, float* input_image, int num_layers) {
 	return 0;
 }
 
-double gigaFlop(struct layer* layers, int num_layers, int batch_size) {
+double gigaFlop(struct layer* layers, int num_layers, int batch_size, int IMAGE_WIDTH, int IMAGE_HEIGHT) {
 	double gFlops = 0;
 	int input_size = IMAGE_WIDTH*IMAGE_HEIGHT*batch_size;
 

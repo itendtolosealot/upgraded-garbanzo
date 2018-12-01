@@ -20,8 +20,6 @@
 #include <cudnn.h>
 #ifndef DEEPLEARNING_H_
 #define DEEPLEARNING_H_
-#define IMAGE_HEIGHT 16
-#define IMAGE_WIDTH 16
 
 #define checkCUDNN(expression)                               \
   {                                                          \
@@ -111,9 +109,9 @@ struct descriptor {
 };
 int setup_descriptors ( struct descriptor** desc, int num_layers, struct layer *layers);
 int destroy_descriptors (struct descriptor* desc, struct cost_descriptor* cost, int num_layers);
-int configure_descriptors(cudnnHandle_t* handle, struct descriptor* desc, int num_layers, struct layer *layers, int batch_size);
-int allocate_memory(struct descriptor* desc, struct cost_descriptor* cost, struct layer* layers, int num_layers, int batch_size) ;
-int copy_input_to_device(struct descriptor* desc, struct cost_descriptor* cost, struct layer* layers, int num_layers, float* input_image, int batch_size);
+int configure_descriptors(cudnnHandle_t* handle, struct descriptor* desc, int num_layers, struct layer *layers, int batch_size, int IMAGE_WIDTH, int IMAGE_HEIGHT);
+int allocate_memory(struct descriptor* desc, struct cost_descriptor* cost, struct layer* layers, int num_layers, int batch_size, int IMAGE_WIDTH, int IMAGE_HEIGHT) ;
+int copy_input_to_device(struct descriptor* desc, struct cost_descriptor* cost, struct layer* layers, int num_layers, float* input_image, int batch_size, int IMAGE_WIDTH, int IMAGE_HEIGHT);
 struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct descriptor* desc, struct cost_descriptor* cost, struct layer *layers, int num_layers, int batch_size);
 int computecost(struct cost_descriptor* cost, int batch_size, int output_size, cublasHandle_t handle, float* total_cost);
 

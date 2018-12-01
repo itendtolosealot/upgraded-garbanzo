@@ -119,7 +119,7 @@ int destroy_descriptors (struct descriptor* desc, struct cost_descriptor* cost, 
 	return 0;
 }
 
-int configure_descriptors(cudnnHandle_t* handle, struct descriptor* desc, int num_layers, struct layer *layers, int batch_size) {
+int configure_descriptors(cudnnHandle_t* handle, struct descriptor* desc, int num_layers, struct layer *layers, int batch_size, int IMAGE_WIDTH, int IMAGE_HEIGHT) {
 	cudnnStatus_t status;
 	int n,c,h,w;
 	for (int i=0; i < num_layers;i++) {
@@ -196,7 +196,7 @@ cudaError_t allocate_memory_cost_desc(struct cost_descriptor* cost, int size_x, 
 	return cudaSuccess;
 }
 
-int allocate_memory(struct descriptor* desc, struct cost_descriptor* cost, struct layer* layers, int num_layers, int batch_size) {
+int allocate_memory(struct descriptor* desc, struct cost_descriptor* cost, struct layer* layers, int num_layers, int batch_size, int IMAGE_WIDTH, int IMAGE_HEIGHT) {
 	int n,c,h,w;
 	cudnnStatus_t status;
 	cudaError_t stat;
@@ -263,7 +263,7 @@ int allocate_memory(struct descriptor* desc, struct cost_descriptor* cost, struc
 	return 0;
 }
 
-int copy_input_to_device(struct descriptor* desc, struct cost_descriptor* cost, struct layer* layers, int num_layers, float* input_image, int batch_size)
+int copy_input_to_device(struct descriptor* desc, struct cost_descriptor* cost, struct layer* layers, int num_layers, float* input_image, int batch_size, int IMAGE_WIDTH, int IMAGE_HEIGHT)
 {
 	cudnnStatus_t status;
 	cudaError_t stat;
@@ -547,5 +547,6 @@ int computecost(struct cost_descriptor* cost, int batch_size, int output_size, c
     if (status != cudaSuccess) { syslog(LOG_ERR, "CudaDeviceSync failed with Error code: %d in cublasSdot", (int)status); return status;}
     if(stat != CUBLAS_STATUS_SUCCESS ){ syslog(LOG_ERR, "CUBLAS dot product failed with Error code: %d", (int)stat); return stat;}
 	*total_cost /= (batch_size);
+	*total_cost = -(*total_cost);
 	return 0;
 }
