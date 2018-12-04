@@ -33,6 +33,13 @@ __global__ void cross_entropy(int batch_size, int output_size, float* y, float* 
   	 }
 }
 
+__global __void vec_sub(float* A, float* B, float* res, int size) {
+	  int i = blockIdx.x*blockDim.x + threadIdx.x;
+	  if (i < size) {
+		  res[i] = A[i] - B[i];
+	  }
+}
+
 /* We calculate the exponent of the output for every output*/
 __global__ void softmax(int array_size, float* out, float* yhat)
 {
@@ -478,17 +485,18 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 	return ff_stat;
 }
 
-/*
+
 struct Status feedback(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct descriptor* desc, struct cost_descriptor cost, struct layer *layers, int num_layers, int batch_size) {
 	struct Status ff_stat;
 	cudnnStatus_t status;
 	cublasStatus_t stat;
 	stat = CUBLAS_STATUS_SUCCESS;
 	status= CUDNN_STATUS_SUCCESS;
-	float alpha = 1.0;
+	float alpha = -1.0;
 	float beta = 0.0;
 
-	stat = cublasSaxpy(*handle, layers[i].fc_layer.size*batch_size, &alpha, desc[i].d_bias, 1, desc[i].d_y, 1);
+	stat = cublasSaxpy(*handle, layers[i].fc_layer.size*batch_size, &alpha, desc[i]., 1, desc[i].d_y, 1);
+	/*
 	for (int i = num_layers - 1; i >= 0; i--) {
 		if (desc[i].valid) {
 			float *dout = (i == num_layers - 1) ? desc[i].d_dout : desc[i + 1].d_din;
@@ -509,12 +517,11 @@ struct Status feedback(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct desc
 			return ff_stat;
 		}
 	}
-
+	*/
 	return ff_stat;
 
 }
 
-*/
 
 int computecost(struct cost_descriptor* cost, int batch_size, int output_size, cublasHandle_t handle, float* total_cost) {
 	cudaError_t status;
