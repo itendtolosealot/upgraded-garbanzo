@@ -202,3 +202,30 @@ double gigaFlop(struct layer* layers, int num_layers, int batch_size, int IMAGE_
 	return gFlops;
 }
 
+void populate_error_status(struct Status* ff_stat, int error_type, int error, int layer) {
+	ff_stat->failure = (FailureType) error_type;
+	ff_stat->layer = layer;
+	switch (error_type) {
+	case 0: ff_stat->cuda_stat = (cudaError_t) error;
+	case 1: ff_stat->cublas_stat = (cublasStatus_t) error;
+	case 2: ff_stat->cudnn_stat = (cudnnStatus_t)error;
+	}
+}
+
+const char* cublasGetErrorString(cublasStatus_t status)
+{
+    switch(status)
+    {
+        case CUBLAS_STATUS_SUCCESS: return "CUBLAS_STATUS_SUCCESS";
+        case CUBLAS_STATUS_NOT_INITIALIZED: return "CUBLAS_STATUS_NOT_INITIALIZED";
+        case CUBLAS_STATUS_ALLOC_FAILED: return "CUBLAS_STATUS_ALLOC_FAILED";
+        case CUBLAS_STATUS_INVALID_VALUE: return "CUBLAS_STATUS_INVALID_VALUE";
+        case CUBLAS_STATUS_ARCH_MISMATCH: return "CUBLAS_STATUS_ARCH_MISMATCH";
+        case CUBLAS_STATUS_MAPPING_ERROR: return "CUBLAS_STATUS_MAPPING_ERROR";
+        case CUBLAS_STATUS_EXECUTION_FAILED: return "CUBLAS_STATUS_EXECUTION_FAILED";
+        case CUBLAS_STATUS_INTERNAL_ERROR: return "CUBLAS_STATUS_INTERNAL_ERROR";
+        case CUBLAS_STATUS_NOT_SUPPORTED: return "CUBLAS_STATUS_NOT_SUPPORTED";
+        case CUBLAS_STATUS_LICENSE_ERROR: return "CUBLAS_STATUS_LICENSE_ERROR";
+    }
+    return "unknown error";
+}

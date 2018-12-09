@@ -33,7 +33,7 @@ __global__ void cross_entropy(int batch_size, int output_size, float* y, float* 
   	 }
 }
 
-__global __void vec_sub(float* A, float* B, float* res, int size) {
+__global__ void vec_sub(float* A, float* B, float* res, int size) {
 	  int i = blockIdx.x*blockDim.x + threadIdx.x;
 	  if (i < size) {
 		  res[i] = A[i] - B[i];
@@ -353,6 +353,9 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 	float* output_array;
 	const float alpha=1, beta=0;
 //  struct timeval start_timeval, end_timeval;
+	ff_stat.cublas_stat = CUBLAS_STATUS_SUCCESS;
+	ff_stat.cuda_stat = cudaSuccess;
+	ff_stat.cudnn_stat = CUDNN_STATUS_SUCCESS;
 
 	for(int i=0;i < num_layers;i++) {
         output_array = (i < num_layers-1) ? desc[i+1].d_input:cost->d_out;
@@ -362,10 +365,8 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 											 desc[i].algo_desc, desc[i].d_workspace,desc[i].workspace_size,
 											 &beta, (desc[i].output_desc), output_array);
 				if(status != CUDNN_STATUS_SUCCESS) {
-					ff_stat.failure = CUDNN;
-					ff_stat.layer = i;
-					ff_stat.cudnn_stat = status;
-					ff_stat.cublas_stat = CUBLAS_STATUS_SUCCESS;
+					populate_error_status(&ff_stat, CUDNN, status, i);
+					syslog(LOG_ERR, "Convolution Failed at Layer %d with error code: %s", i, cudnnGetErrorString(status));
 					return ff_stat;
 				}
 		} else {
@@ -388,25 +389,18 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 									desc[i].d_y,
 									layers[i].fc_layer.size);
 				if (stat != CUBLAS_STATUS_SUCCESS) {
-									ff_stat.failure = CUBLAS;
-									ff_stat.cublas_stat=stat;
-									ff_stat.layer = i;
-									ff_stat.cudnn_stat = CUDNN_STATUS_SUCCESS;
-									ff_stat.cuda_stat = cudaSuccess;
-									syslog(LOG_ERR, "Error in cublasSgemm routine in layer %d",i);
-									return ff_stat;
+					populate_error_status(&ff_stat, CUBLAS, stat, i);
+					syslog(LOG_ERR, "Matrix Multiplication failed with error: %s in layer %d ",cublasGetErrorString(stat),i);
+					return ff_stat;
 				} else {
 					syslog(LOG_DEBUG, "cublasSgemm routine successful");
 				}
 
 				cuda_stat = cudaDeviceSynchronize();
 				if(cuda_stat != cudaSuccess) {
-					ff_stat.failure = CUDA;
-					ff_stat.layer = i;
-					ff_stat.cublas_stat=CUBLAS_STATUS_SUCCESS;
-					ff_stat.cudnn_stat = CUDNN_STATUS_SUCCESS;
-					ff_stat.cuda_stat = cuda_stat;
-					syslog(LOG_ERR, "Error in cudaDeviceSynchronize routine after cublasSgemm in layer %d", i);
+					populate_error_status(&ff_stat, CUDA, cuda_stat, i);
+					syslog(LOG_ERR, "cudaDeviceSynchronize failed Error code: %s after Matrix Mul in layer %d, Error desc: %s",
+							cudaGetErrorName(cuda_stat), i, cudaGetErrorString(cuda_stat));
 					return ff_stat;
 				} else {
 					syslog(LOG_DEBUG, "cudaDeviceSychronize() after cublasSgemm successful");
@@ -414,12 +408,8 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 
 				stat = cublasSaxpy(*handle, layers[i].fc_layer.size*batch_size, &alpha, desc[i].d_bias, 1, desc[i].d_y, 1);
 				if (stat != CUBLAS_STATUS_SUCCESS) {
-					ff_stat.failure = CUBLAS;
-					ff_stat.layer = i;
-					ff_stat.cublas_stat=stat;
-					ff_stat.cudnn_stat = CUDNN_STATUS_SUCCESS;
-					ff_stat.cuda_stat = cudaSuccess;
-					syslog(LOG_ERR, "Error in cublasSaxpy routine");
+					populate_error_status(&ff_stat, CUBLAS, stat, i);
+					syslog(LOG_ERR, "Error in cublasSaxpy routine. Error code: %s", cublasGetErrorString(stat));
 					return ff_stat;
 				} else {
 					syslog(LOG_DEBUG, "cublasSaxpy routine successful");
@@ -427,12 +417,9 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 
 				cuda_stat = cudaDeviceSynchronize();
 				if(cuda_stat != cudaSuccess) {
-					ff_stat.failure = CUDA;
-					ff_stat.layer = i;
-					ff_stat.cublas_stat=CUBLAS_STATUS_SUCCESS;
-					ff_stat.cudnn_stat = CUDNN_STATUS_SUCCESS;
-					ff_stat.cuda_stat = cuda_stat;
-					syslog(LOG_ERR, "Error in cudaDeviceSynchronize routine after cublasSaxpy");
+					populate_error_status(&ff_stat, CUDA, cuda_stat, i);
+					syslog(LOG_ERR, "cudaDeviceSynchronize failed Error code: %s after cublasSaxpy in layer %d, Error desc: %s",
+									cudaGetErrorName(cuda_stat), i, cudaGetErrorString(cuda_stat));
 					return ff_stat;
 				} else {
 					syslog(LOG_DEBUG, "cudaDeviceSynchronize routine successful after cublasSgemm");
@@ -450,13 +437,10 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 												desc[i].output_desc , output_array);
 				cuda_stat = cudaDeviceSynchronize();
 				if(cuda_stat != cudaSuccess) {
-									ff_stat.failure = CUDA;
-									ff_stat.layer = i;
-									ff_stat.cublas_stat=CUBLAS_STATUS_SUCCESS;
-									ff_stat.cudnn_stat = CUDNN_STATUS_SUCCESS;
-									ff_stat.cuda_stat = cuda_stat;
-									syslog(LOG_ERR, "Error in cudaDeviceSynchronize routine after Activation");
-									return ff_stat;
+					populate_error_status(&ff_stat, CUDA, cuda_stat, i);
+					syslog(LOG_ERR, "cudaDeviceSynchronize failed Error code: %s after Activation in layer %d, Error desc: %s",
+							cudaGetErrorName(cuda_stat), i, cudaGetErrorString(cuda_stat));
+					return ff_stat;
 				} else {
 					syslog(LOG_DEBUG, "cudaDeviceSynchronize routine successful after Activation");
 				}
@@ -468,14 +452,9 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 				printf("GfLops using GPU Time at Activation Layer %d  is %2.3f\n", i, flop*1e-6/msec_timeval);
 				*/
 				if(status != CUDNN_STATUS_SUCCESS) {
-								ff_stat.failure = CUDNN;
-								ff_stat.layer = i;
-								ff_stat.cudnn_stat=status;
-								ff_stat.cublas_stat = CUBLAS_STATUS_SUCCESS;
-								ff_stat.cuda_stat = cudaSuccess;
-								syslog(LOG_ERR, "cudnnError in cudnnActivationForward routine");
-								return ff_stat;
-
+					populate_error_status(&ff_stat, CUDNN, status, i);
+					syslog(LOG_ERR, "Activation failed Error code: %s after Activation in layer %d", cudnnGetErrorString(status), i);
+				   return ff_stat;
 				} else {
 					syslog(LOG_DEBUG, "Activation routine successful");
 				}
@@ -485,41 +464,74 @@ struct Status feedforward(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct d
 	return ff_stat;
 }
 
+cudaError_t compute_gradient_cost_function(struct cost_descriptor* cost, int output_size, int batch_size) {
+	int blockSize = 1024;
+	int gridSize = ceil(batch_size*output_size/blockSize);
+	cudaError_t error;
+	vec_sub << <gridSize, blockSize >> > (cost->d_yhat, cost->d_y, cost->d_dout, batch_size*output_size);
+	error = cudaDeviceSynchronize();
+	if (error != cudaSuccess) {
+			syslog(LOG_ERR, "Cost gradient computation failed. Error code: %s, Error Description: %s",
+					cudaGetErrorName(error), cudaGetErrorString(error));
+	}
+	return error;
+}
 
-struct Status feedback(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct descriptor* desc, struct cost_descriptor cost, struct layer *layers, int num_layers, int batch_size) {
+struct Status feedback(cudnnHandle_t* cudnn, cublasHandle_t* handle, struct descriptor* desc, struct cost_descriptor* cost, struct layer *layers, int num_layers, int output_size, int batch_size) {
 	struct Status ff_stat;
 	cudnnStatus_t status;
 	cublasStatus_t stat;
 	stat = CUBLAS_STATUS_SUCCESS;
 	status= CUDNN_STATUS_SUCCESS;
+
 	float alpha = -1.0;
 	float beta = 0.0;
+	ff_stat.cublas_stat = CUBLAS_STATUS_SUCCESS;
+	ff_stat.cuda_stat = cudaSuccess;
+	ff_stat.cudnn_stat = CUDNN_STATUS_SUCCESS;
 
-	stat = cublasSaxpy(*handle, layers[i].fc_layer.size*batch_size, &alpha, desc[i]., 1, desc[i].d_y, 1);
-	/*
 	for (int i = num_layers - 1; i >= 0; i--) {
+		float *d_out = (i == num_layers - 1) ? cost->d_out : desc[i + 1].d_input;
+		float *d_dout = (i == num_layers - 1) ? cost->d_dout : desc[i + 1].d_din;
 		if (desc[i].valid) {
-			float *dout = (i == num_layers - 1) ? desc[i].d_dout : desc[i + 1].d_din;
-			status = cudnnConvolutionBackwardData(*handle, &alpha, desc[i].filter_desc, desc[i].d_filter, desc[i].dout_desc, dout,
-													desc[i].conv_desc, layers[i].conv_layer.algorithm, desc[i].d_workspace, desc[i].workspace_size,
-													&beta, desc[i].din_desc, desc[i].d_din);
-			if (status != CUDNN_STATUS_SUCCESS) {
-				return status;
+			/* Check for i>0, since inputs are not modified and therefore, there is no need to calculate gradient w.r.t input */
+			if (i > 0) {
+				status = cudnnConvolutionBackwardData(*cudnn, &alpha, desc[i].filter_desc, desc[i].d_filter, desc[i].dout_desc, d_dout,
+														desc[i].conv_desc, CUDNN_CONVOLUTION_BWD_DATA_ALGO_1, desc[i].d_workspace,
+														desc[i].workspace_size, &beta, desc[i].din_desc, desc[i].d_din);
+				if (status != CUDNN_STATUS_SUCCESS) {
+					syslog(LOG_ERR, "Input gradient computation failed with Error code: %s,  at Layer %d ", cudnnGetErrorString(status), i);
+					populate_error_status(&ff_stat, CUDNN, status, i);
+					return ff_stat;
+				} else {
+					syslog(LOG_DEBUG, "Input gradient computation successful at Layer %d", i);
+				}
 			}
-			status = cudnnConvolutionBackwardFilter(*handle, &alpha, desc[i].input_desc, desc[i].d_input,
-													desc[i].dout_desc, dout, desc[i].conv_desc, layers[i].conv_layer.algorithm
-													desc[i].d_workspace, desc[i].workspace_size, &beta, desc[i].dfilter_desc, desc[i].d_df);
+			status = cudnnConvolutionBackwardFilter(*cudnn, &alpha, desc[i].input_desc, desc[i].d_input, desc[i].dout_desc, d_dout,
+													desc[i].conv_desc, CUDNN_CONVOLUTION_BWD_FILTER_ALGO_1, desc[i].d_workspace,
+													desc[i].workspace_size, &beta, desc[i].dfilter_desc, desc[i].d_df);
 			if (status != CUDNN_STATUS_SUCCESS) {
-				return status;
+				syslog(LOG_ERR, "Weight gradient computation failed with Error code: %s,  at Layer %d ", cudnnGetErrorString(status), i);
+				populate_error_status(&ff_stat, CUDNN, status, i);
+				return ff_stat;
+			} else {
+				syslog(LOG_DEBUG, "Weight gradient computation successful at Layer %d", i);
 			}
 		}
 		else {
+			status = cudnnActivationBackward(*cudnn, desc[i].acti_desc, &alpha, desc[i].output_desc, d_out,  desc[i].dout_desc,
+											 d_dout, desc[i].y_desc, desc[i].d_y, &beta, desc[i].dy_desc, desc[i].d_dy);
+			if (status != CUDNN_STATUS_SUCCESS) {
+				syslog(LOG_ERR, "Weight gradient computation failed with Error code: %s,  at Layer %d ", cudnnGetErrorString(status), i);
+				populate_error_status(&ff_stat, CUDNN, status, i);
+				return ff_stat;
+			} else {
+				syslog(LOG_DEBUG, "Weight gradient computation successful at Layer %d", i);
+			}
 			return ff_stat;
 		}
 	}
-	*/
 	return ff_stat;
-
 }
 
 
@@ -535,24 +547,40 @@ int computecost(struct cost_descriptor* cost, int batch_size, int output_size, c
 	/* Softmax on every output. The result is stored in yhat itself. */
 	softmax << <gridSize, blockSize >> > (batch_size*output_size, cost->d_out, cost->d_yhat);
 	status = cudaDeviceSynchronize();
-	if (status != cudaSuccess) { syslog(LOG_ERR, "CudaDeviceSync failed with Error code: %d during Kernel run of softmax", (int)status); return status; }
+	if (status != cudaSuccess) {
+		syslog(LOG_ERR, "Softmax failed with Error code: %s Error desc: %s", cudaGetErrorName(status), cudaGetErrorString(status)) ;
+		return status;
+	}
 
 	/* Matrix mul to find \sum_{i=0}^{output_size} yhat[i]. This will give the sum of exponents for a given exaomple*/
 	stat = cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, 1, batch_size, output_size, &alpha, cost->d_one_vec, 1, cost->d_yhat, output_size, &beta, cost->d_sum_exp, 1);
 	//print_to_file(fp, cost->d_sum_exp, batch_size, "d_sum_exp", 2, 0);
 
-	if (stat != CUBLAS_STATUS_SUCCESS) { syslog(LOG_ERR, "CUBLAS matrix mult to compute sum_exponents failed with Error code: %d ", (int)stat); return stat;}
+	if (stat != CUBLAS_STATUS_SUCCESS) {
+		syslog(LOG_ERR, "Softmax sum-exponent failed with Error code: %s", cublasGetErrorString(stat));
+		 return status;
+	}
 	/* Calculating cross entropy knowing the sum of exponents*/
 	cross_entropy<<<gridSize, blockSize>>>(batch_size, output_size, cost->d_y, cost->d_yhat, cost->d_sum_exp);
     status = cudaDeviceSynchronize();
-    if (status != cudaSuccess) { syslog(LOG_ERR, "CudaDeviceSync failed with Error code: %d during Kernel run of cross_entropy", (int)status); return status;}
+    if (status != cudaSuccess) {
+    	syslog(LOG_ERR, "cross_entropy failed with Error code: %s, Error Desc: %s ", cudaGetErrorName(status), cudaGetErrorString(status));
+    	return status;
+    }
 	//fclose(fp);
 
 	/* Dot product to compute the sum of all the log properties*/
     stat = cublasSdot_v2(handle, batch_size*output_size, cost->d_one_vec, 1 , cost->d_yhat, 1, total_cost);
     status = cudaDeviceSynchronize();
-    if (status != cudaSuccess) { syslog(LOG_ERR, "CudaDeviceSync failed with Error code: %d in cublasSdot", (int)status); return status;}
-    if(stat != CUBLAS_STATUS_SUCCESS ){ syslog(LOG_ERR, "CUBLAS dot product failed with Error code: %d", (int)stat); return stat;}
+    if (status != cudaSuccess) {
+    	syslog(LOG_ERR, "Softmax failed with Error code: %s Error desc: %s", cudaGetErrorName(status), cudaGetErrorString(status)) ;
+    	return status;
+    }
+
+	if (stat != CUBLAS_STATUS_SUCCESS) {
+		syslog(LOG_ERR, "Total cost computation sum-exponent failed with Error code: %s", cublasGetErrorString(stat));
+		return status;
+	}
 	*total_cost /= (batch_size);
 	*total_cost = -(*total_cost);
 	return 0;

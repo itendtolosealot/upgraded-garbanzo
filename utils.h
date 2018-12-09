@@ -33,5 +33,7 @@ void sigmoidCPU(float* A, int size);
 void computeCostCPU(float* y, float* yhat, float* sum_exp, int output_size, int size, float* cost);
 int destroy_layers(struct layer* layers, float* input_image, int num_layers);
 double gigaFlop(struct layer* layers, int num_layers, int batch_size,  int IMAGE_WIDTH, int IMAGE_HEIGHT);
+const char* cublasGetErrorString(cublasStatus_t status);
 void replicate_bias_for_batch(int size, int batch_size, float* bias_src, float** bias_dest);
+void populate_error_status(struct Status* ff_stat, int error_type, int error, int layer);
 #endif /* UTILS_H_ */
